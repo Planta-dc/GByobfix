@@ -207,19 +207,28 @@ void audio_exit(void)
     if (!running && !ring[0])
         return;
 
+    bool started = false;
+
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
         if (ring[ear]) {
-            if (channel[ear] >= 0)
+            if (channel[ear] >= 0) {
                 CSND_SetPlayState(channel[ear], 0);
+                started = true;
+            }
             linearFree(ring[ear]);
             ring[ear] = NULL;
         }
+        channel[ear] = -1;
     }
 
     /* The commands above are only written into the service's queue.
      * They are not sent until the queue is executed, and without this
-     * the service keeps playing the ring that has just been freed. */
-    if (running)
+     * the service keeps playing the ring that has just been freed.
+     *
+     * This has to happen even when the transport never started properly,
+     * because a channel that was started and then not stopped goes on
+     * playing a buffer that is no longer there. */
+    if (started)
         csndExecCmds(true);
 
     running = false;
