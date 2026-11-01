@@ -12,9 +12,20 @@
 const u32 TEXT_COLOR = RGB24(0xff, 0xff, 0xff);
 const u32 BG_COLOR = RGB24(0x00, 0x00, 0x00);
 
-PrintConsole* currentConsole = NULL;
+/*
+ * The console this port draws with.
+ *
+ * It is libctru's PrintConsole, filled in by consoleInitBottom(). The name
+ * used to be currentConsole, which is the name libctru uses for its own
+ * console pointer. Both are variables in the global namespace, and a C++
+ * variable in the global namespace is not mangled, so the two would have had
+ * the same symbol name and the link would have failed with "multiple
+ * definition". Nothing outside this file refers to it, so it is static and
+ * the name cannot collide with anything.
+ */
+static PrintConsole* activeConsole = NULL;
 
-PrintConsole mainConsole;
+static PrintConsole mainConsole;
 
 /* The screen the console is on, and whether it has to be redrawn. */
 gfxScreen_t consoleScreen = GFX_BOTTOM;
@@ -22,19 +33,19 @@ bool consoleRedraw = false;
 
 static void consoleCls(char);
 
-void newRow() {
-    currentConsole->cursorY++;
+static void newRow() {
+    activeConsole->cursorY++;
 
-    if (currentConsole->cursorY >= currentConsole->consoleHeight) {
+    if (activeConsole->cursorY >= activeConsole->consoleHeight) {
         consoleCls('2');
         /*
-        currentConsole->cursorY--;
+        activeConsole->cursorY--;
 
-        for (int j=currentConsole->consoleHeight-2; j>=0; j--) {
+        for (int j=activeConsole->consoleHeight-2; j>=0; j--) {
             for (int y=0; y<CHAR_HEIGHT; y++) {
-                for (int x=0; x<currentConsole->consoleWidth*CHAR_WIDTH; x++) {
-                    drawPixel((u8*)currentConsole->frameBuffer, x, j*CHAR_HEIGHT+y,
-                            getPixel((u8*)currentConsole->frameBuffer, x, (j+1)*CHAR_HEIGHT+y));
+                for (int x=0; x<activeConsole->consoleWidth*CHAR_WIDTH; x++) {
+                    drawPixel((u8*)activeConsole->frameBuffer, x, j*CHAR_HEIGHT+y,
+                            getPixel((u8*)activeConsole->frameBuffer, x, (j+1)*CHAR_HEIGHT+y));
                 }
             }
         }
@@ -43,30 +54,30 @@ void newRow() {
 }
 
 void consoleDrawChar(char c) {
-    int x = currentConsole->cursorX*CHAR_WIDTH;
-    int y = currentConsole->cursorY*CHAR_HEIGHT;
+    int x = activeConsole->cursorX*CHAR_WIDTH;
+    int y = activeConsole->cursorY*CHAR_HEIGHT;
 
     for (int cy=0; cy<CHAR_HEIGHT; cy++) {
         for (int cx=0; cx<CHAR_WIDTH; cx+=2) {
             u8 byte = default_font_bin[c*CHAR_WIDTH*CHAR_HEIGHT/2 + cy*4 + cx/2];
             if (byte&0xf)
-                drawPixel((u8*)currentConsole->frameBuffer, x+cx, y+cy, TEXT_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer, x+cx, y+cy, TEXT_COLOR);
             else
-                drawPixel((u8*)currentConsole->frameBuffer,  x+cx, y+cy, BG_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer,  x+cx, y+cy, BG_COLOR);
             if (byte>>4)
-                drawPixel((u8*)currentConsole->frameBuffer,  x+cx+1, y+cy, TEXT_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer,  x+cx+1, y+cy, TEXT_COLOR);
             else
-                drawPixel((u8*)currentConsole->frameBuffer,  x+cx+1, y+cy, BG_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer,  x+cx+1, y+cy, BG_COLOR);
         }
     }
     consoleRedraw = true;
 }
-void consolePrintChar(char c) {
+static void consolePrintChar(char c) {
 	if (c == 0)
         return;
 
-	if(currentConsole->cursorX >= currentConsole->consoleWidth) {
-		currentConsole->cursorX  = 0;
+	if(activeConsole->cursorX >= activeConsole->consoleWidth) {
+		activeConsole->cursorX  = 0;
 
 		newRow();
 	}
@@ -83,14 +94,14 @@ void consolePrintChar(char c) {
 		*/
         // Backspace
 		case 8:
-			currentConsole->cursorX--;
+			activeConsole->cursorX--;
 
-			if(currentConsole->cursorX < 0) {
-				if(currentConsole->cursorY > 0) {
-					currentConsole->cursorX = currentConsole->consoleWidth - 1;
-					currentConsole->cursorY--;
+			if(activeConsole->cursorX < 0) {
+				if(activeConsole->cursorY > 0) {
+					activeConsole->cursorX = activeConsole->consoleWidth - 1;
+					activeConsole->cursorY--;
 				} else {
-					currentConsole->cursorX = 0;
+					activeConsole->cursorX = 0;
 				}
 			}
 
@@ -99,18 +110,18 @@ void consolePrintChar(char c) {
 
             // Tab
 		case 9:
-			currentConsole->cursorX += 4 - (currentConsole->cursorX)%4;
+			activeConsole->cursorX += 4 - (activeConsole->cursorX)%4;
 			break;
             // Newline
 		case 10:
 			newRow();
             // Carriage return
 		case 13:
-			currentConsole->cursorX = 0;
+			activeConsole->cursorX = 0;
 			break;
 		default:
             consoleDrawChar(c);
-			currentConsole->cursorX++;
+			activeConsole->cursorX++;
 			break;
 	}
 }
@@ -124,41 +135,41 @@ static void consoleCls(char mode) {
 	{
 	case '0':
 		{
-			colTemp = currentConsole->cursorX ;
-			rowTemp = currentConsole->cursorY ;
+			colTemp = activeConsole->cursorX ;
+			rowTemp = activeConsole->cursorY ;
 
-			while(i++ < ((currentConsole->consoleHeight * currentConsole->consoleWidth) - (rowTemp * currentConsole->consoleWidth + colTemp)))
+			while(i++ < ((activeConsole->consoleHeight * activeConsole->consoleWidth) - (rowTemp * activeConsole->consoleWidth + colTemp)))
 				consolePrintChar(' ');
 
-			currentConsole->cursorX  = colTemp;
-			currentConsole->cursorY  = rowTemp;
+			activeConsole->cursorX  = colTemp;
+			activeConsole->cursorY  = rowTemp;
 			break;
 		}
 	case '1':
 		{
-			colTemp = currentConsole->cursorX ;
-			rowTemp = currentConsole->cursorY ;
+			colTemp = activeConsole->cursorX ;
+			rowTemp = activeConsole->cursorY ;
 
-			currentConsole->cursorY  = 0;
-			currentConsole->cursorX  = 0;
+			activeConsole->cursorY  = 0;
+			activeConsole->cursorX  = 0;
 
-			while (i++ < (rowTemp * currentConsole->consoleWidth + colTemp))
+			while (i++ < (rowTemp * activeConsole->consoleWidth + colTemp))
 				consolePrintChar(' ');
 
-			currentConsole->cursorX  = colTemp;
-			currentConsole->cursorY  = rowTemp;
+			activeConsole->cursorX  = colTemp;
+			activeConsole->cursorY  = rowTemp;
 			break;
 		}
 	case '2':
 		{
-			currentConsole->cursorY  = 0;
-			currentConsole->cursorX  = 0;
+			activeConsole->cursorY  = 0;
+			activeConsole->cursorX  = 0;
 
-			while(i++ < currentConsole->consoleHeight * currentConsole->consoleWidth)
+			while(i++ < activeConsole->consoleHeight * activeConsole->consoleWidth)
 				consolePrintChar(' ');
 
-			currentConsole->cursorY  = 0;
-			currentConsole->cursorX  = 0;
+			activeConsole->cursorY  = 0;
+			activeConsole->cursorX  = 0;
 			break;
 		}
 	}
@@ -172,60 +183,71 @@ static void consoleClearLine(char mode) {
 	{
 	case '0':
 		{
-			colTemp = currentConsole->cursorX ;
+			colTemp = activeConsole->cursorX ;
 
-			while(i++ < (currentConsole->consoleWidth - colTemp)) {
+			while(i++ < (activeConsole->consoleWidth - colTemp)) {
 				consolePrintChar(' ');
 			}
 
-			currentConsole->cursorX  = colTemp;
+			activeConsole->cursorX  = colTemp;
 
 			break;
 		}
 	case '1':
 		{
-			colTemp = currentConsole->cursorX ;
+			colTemp = activeConsole->cursorX ;
 
-			currentConsole->cursorX  = 0;
+			activeConsole->cursorX  = 0;
 
-			while(i++ < ((currentConsole->consoleWidth - colTemp)-2)) {
+			while(i++ < ((activeConsole->consoleWidth - colTemp)-2)) {
 				consolePrintChar(' ');
 			}
 
-			currentConsole->cursorX  = colTemp;
+			activeConsole->cursorX  = colTemp;
 
 			break;
 		}
 	case '2':
 		{
-			colTemp = currentConsole->cursorX ;
+			colTemp = activeConsole->cursorX ;
 
-			currentConsole->cursorX  = 0;
+			activeConsole->cursorX  = 0;
 
-			while(i++ < currentConsole->consoleWidth) {
+			while(i++ < activeConsole->consoleWidth) {
 				consolePrintChar(' ');
 			}
 
-			currentConsole->cursorX  = colTemp;
+			activeConsole->cursorX  = colTemp;
 
 			break;
 		}
 	default:
 		{
-			colTemp = currentConsole->cursorX ;
+			colTemp = activeConsole->cursorX ;
 
-			while(i++ < (currentConsole->consoleWidth - colTemp)) {
+			while(i++ < (activeConsole->consoleWidth - colTemp)) {
 				consolePrintChar(' ');
 			}
 
-			currentConsole->cursorX  = colTemp;
+			activeConsole->cursorX  = colTemp;
 
 			break;
 		}
 	}
 }
 
-ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
+/*
+ * The write end of the console's device, which is how printf() gets to the
+ * screen.
+ *
+ * The second argument is a void* because that is what newlib's devoptab_t
+ * says it is. The port had it as an int, which is a different function type,
+ * and a devoptab_t that holds a function of the wrong type does not compile
+ * against the real newlib header. It is static for the same reason the rest
+ * of this file is: libctru exports a con_write of its own, and a file-scope
+ * function in C++ is mangled but a static one is not exported at all.
+ */
+static ssize_t con_write(struct _reent *r, void *fd, const char *ptr, size_t len) {
 
 	char chr;
 
@@ -258,22 +280,22 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 					/////////////////////////////////////////
 					case 'A':
 						siscanf(escapeseq,"[%dA", &parameter);
-						currentConsole->cursorY  =  (currentConsole->cursorY  - parameter) < 0 ? 0 : currentConsole->cursorY  - parameter;
+						activeConsole->cursorY  =  (activeConsole->cursorY  - parameter) < 0 ? 0 : activeConsole->cursorY  - parameter;
 						escaping = false;
 						break;
 					case 'B':
 						siscanf(escapeseq,"[%dB", &parameter);
-						currentConsole->cursorY  =  (currentConsole->cursorY  + parameter) > currentConsole->consoleHeight - 1 ? currentConsole->consoleHeight - 1 : currentConsole->cursorY  + parameter;
+						activeConsole->cursorY  =  (activeConsole->cursorY  + parameter) > activeConsole->consoleHeight - 1 ? activeConsole->consoleHeight - 1 : activeConsole->cursorY  + parameter;
 						escaping = false;
 						break;
 					case 'C':
 						siscanf(escapeseq,"[%dC", &parameter);
-						currentConsole->cursorX  =  (currentConsole->cursorX  + parameter) > currentConsole->consoleWidth - 1 ? currentConsole->consoleWidth - 1 : currentConsole->cursorX  + parameter;
+						activeConsole->cursorX  =  (activeConsole->cursorX  + parameter) > activeConsole->consoleWidth - 1 ? activeConsole->consoleWidth - 1 : activeConsole->cursorX  + parameter;
 						escaping = false;
 						break;
 					case 'D':
 						siscanf(escapeseq,"[%dD", &parameter);
-						currentConsole->cursorX  =  (currentConsole->cursorX  - parameter) < 0 ? 0 : currentConsole->cursorX  - parameter;
+						activeConsole->cursorX  =  (activeConsole->cursorX  - parameter) < 0 ? 0 : activeConsole->cursorX  - parameter;
 						escaping = false;
 						break;
 						/////////////////////////////////////////
@@ -281,7 +303,7 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 						/////////////////////////////////////////
 					case 'H':
 					case 'f':
-						siscanf(escapeseq,"[%d;%df", &currentConsole->cursorY , &currentConsole->cursorX );
+						siscanf(escapeseq,"[%d;%df", &activeConsole->cursorY , &activeConsole->cursorX );
 						escaping = false;
 						break;
 						/////////////////////////////////////////
@@ -302,16 +324,16 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 						// Save cursor position
 						/////////////////////////////////////////
 					case 's':
-						currentConsole->prevCursorX  = currentConsole->cursorX ;
-						currentConsole->prevCursorY  = currentConsole->cursorY ;
+						activeConsole->prevCursorX  = activeConsole->cursorX ;
+						activeConsole->prevCursorY  = activeConsole->cursorY ;
 						escaping = false;
 						break;
 						/////////////////////////////////////////
 						// Load cursor position
 						/////////////////////////////////////////
 					case 'u':
-						currentConsole->cursorX  = currentConsole->prevCursorX ;
-						currentConsole->cursorY  = currentConsole->prevCursorY ;
+						activeConsole->cursorX  = activeConsole->prevCursorX ;
+						activeConsole->cursorY  = activeConsole->prevCursorY ;
 						escaping = false;
 						break;
 						/////////////////////////////////////////
@@ -335,7 +357,7 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 						}
                         /*
 						if(parameter < 16 && parameter >= 0){
-							currentConsole->fontCurPal = parameter << 12;
+							activeConsole->fontCurPal = parameter << 12;
 						}
                         */
 
@@ -352,7 +374,15 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 	return count;
 }
 
-static devoptab_t dotab_stdout = {
+/*
+ * The console's device, which newlib's stdout and stderr are pointed at.
+ *
+ * The table newlib keeps is "const devoptab_t *devoptab_list[]", so the
+ * entries have to be const devoptab_t, and the write_r member has to be a
+ * function of the type newlib says it is. The order of the members is
+ * newlib's, not ours.
+ */
+static const devoptab_t dotab_stdout = {
 	"con",
 	0,
 	NULL,
@@ -364,11 +394,11 @@ static devoptab_t dotab_stdout = {
 };
 
 void consoleInitBottom() {
-    currentConsole = &mainConsole;
-    currentConsole->cursorX = 0;
-    currentConsole->cursorY = 0;
-    currentConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
-    currentConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
+    activeConsole = &mainConsole;
+    activeConsole->cursorX = 0;
+    activeConsole->cursorY = 0;
+    activeConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
+    activeConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
     consoleRedraw = true;
 
     consoleScreen = GFX_BOTTOM;
@@ -385,12 +415,12 @@ void consoleSetScreen(gfxScreen_t screen) {
     if (screen != consoleScreen) {
         consoleCls('2');
         if (screen == 0) {
-            currentConsole->consoleWidth = TOP_SCREEN_WIDTH / CHAR_WIDTH;
-            currentConsole->consoleHeight = TOP_SCREEN_HEIGHT / CHAR_HEIGHT;
+            activeConsole->consoleWidth = TOP_SCREEN_WIDTH / CHAR_WIDTH;
+            activeConsole->consoleHeight = TOP_SCREEN_HEIGHT / CHAR_HEIGHT;
         }
         else {
-            currentConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
-            currentConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
+            activeConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
+            activeConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
         }
         consoleScreen = screen;
         consoleCheckFramebuffers();
@@ -411,7 +441,7 @@ static u8* lastFramebuffer = NULL;
 void consoleCheckFramebuffers() {
     u16 width, height;
     u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
-    currentConsole->frameBuffer = (u16*)framebuffer;
+    activeConsole->frameBuffer = (u16*)framebuffer;
     lastFramebuffer = framebuffer;
     consoleRedraw = false;
 }
@@ -421,13 +451,13 @@ void consoleAfterSwap() {
     u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
 
     if (framebuffer != lastFramebuffer && lastFramebuffer) {
-        int size = (currentConsole->consoleWidth*CHAR_WIDTH *
-                currentConsole->consoleHeight*CHAR_HEIGHT) * 3;
+        int size = (activeConsole->consoleWidth*CHAR_WIDTH *
+                activeConsole->consoleHeight*CHAR_HEIGHT) * 3;
         memcpy(framebuffer, lastFramebuffer, size);
     }
 
     lastFramebuffer = framebuffer;
-    currentConsole->frameBuffer = (u16*)framebuffer;
+    activeConsole->frameBuffer = (u16*)framebuffer;
 }
 
 void consoleFlush() {
@@ -440,8 +470,8 @@ void consoleFlush() {
 }
 
 int consoleGetWidth() {
-    return currentConsole->consoleWidth;
+    return activeConsole->consoleWidth;
 }
 int consoleGetHeight() {
-    return currentConsole->consoleHeight;
+    return activeConsole->consoleHeight;
 }
