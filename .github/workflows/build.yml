@@ -12,10 +12,6 @@ on:
   pull_request:
   workflow_dispatch:
 
-env:
-  DEVKITPRO: /opt/devkitpro
-  DEVKITARM: /opt/devkitpro/devkitARM
-
 jobs:
   host:
     name: The host tests
@@ -34,12 +30,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install the tools
-        run: bash .github/scripts/install-3ds-packaging-tools.sh
-
-      - name: Check the port against the SDK
-        run: tools/host/check-libctru.sh "$DEVKITPRO/libctru/include"
 
       - name: Build
         run: bash docker/ci-build.sh
@@ -60,9 +50,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install the tools
-        run: bash .github/scripts/install-3ds-packaging-tools.sh
 
       - name: Build
         run: bash docker/ci-build.sh

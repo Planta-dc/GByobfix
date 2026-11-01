@@ -7,7 +7,23 @@ obvious, and about the checks that can be run without any of them.
 ## The 3DS port
 
 The port needs devkitARM, libctru and 3dsxtool. The easiest way to get
-them is devkitPro's package manager:
+them is devkitPro's own container, which has all three in it:
+
+```sh
+docker run --rm -v "$PWD:/src" -w /src devkitpro/devkitarm:latest \
+    make -C platform/3ds
+```
+
+`docker/ci-build.sh` does that, and also builds `makerom`, which the
+`.cia` and the `.3ds` need and which is neither in the container nor in
+devkitPro's package manager:
+
+```sh
+bash docker/ci-build.sh
+```
+
+If you would rather build it yourself, install the tools with devkitPro's
+package manager:
 
 ```sh
 export DEVKITPRO=/opt/devkitpro
@@ -15,8 +31,7 @@ curl -fsSL https://apt.devkitpro.org/install-devkitpro-pacman | sudo bash
 sudo dkp-pacman -S 3ds-dev 3dsxtool
 ```
 
-The `.cia` and `.3ds` builds also need `makerom`, which is not in the
-package manager and has to be built from its source:
+and build `makerom` from its source:
 
 ```sh
 git clone https://github.com/3DSGuy/Project_CTR.git tools/makerom
