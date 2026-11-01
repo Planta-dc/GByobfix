@@ -22,6 +22,11 @@ int main(int argc, char* argv[])
 	hidInit();
 	gfxInitDefault();
 
+	/* The top screen is 400 by 240, which is the wide mode; left in the
+	 * two dimensional mode it is 240 by 240, and the picture and the
+	 * interface would both be cut off down the side. */
+	gfxSetWide(true);
+
 	/* The screens are given a framebuffer of sixteen bits a pixel rather
 	 * than twenty-four. The interface is drawn in that format, and the
 	 * picture is a third less for the bus to carry: the blit that draws

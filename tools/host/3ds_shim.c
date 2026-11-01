@@ -33,6 +33,13 @@ int hostGetBufferIndex(gfxScreen_t screen)
     return (screen == GFX_TOP) ? topIndex : bottomIndex;
 }
 
+/* The top screen is put into wide mode by the port. The stand-in has only
+ * one shape for it, which is the wide one. */
+void gfxSetWide(bool enable)
+{
+    (void)enable;
+}
+
 void gfxInitDefault(void)
 {
     topIndex = 0;
@@ -45,14 +52,16 @@ u8* gfxGetFramebuffer(gfxScreen_t screen, gfx3dSide_t side, u16* width, u16* hei
 {
     (void)side;
 
+    /* The framebuffer is 240 pixels wide and holds the picture on its
+     * side, so it is as many rows as the screen is wide. */
     if (screen == GFX_TOP) {
-        if (width) *width = GSP_SCREEN_HEIGHT_TOP_2X;
-        if (height) *height = GSP_SCREEN_WIDTH;
+        if (width) *width = GSP_SCREEN_WIDTH;
+        if (height) *height = GSP_SCREEN_HEIGHT_TOP_2X;
         return topBuffer[topIndex];
     }
 
-    if (width) *width = GSP_SCREEN_HEIGHT_BOTTOM;
-    if (height) *height = GSP_SCREEN_WIDTH;
+    if (width) *width = GSP_SCREEN_WIDTH;
+    if (height) *height = GSP_SCREEN_HEIGHT_BOTTOM;
     return bottomBuffer[bottomIndex];
 }
 

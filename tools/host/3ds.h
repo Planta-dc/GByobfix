@@ -72,6 +72,7 @@ u8* hostGetFramebuffer(gfxScreen_t screen, int buffer);
 int hostGetBufferIndex(gfxScreen_t screen);
 
 void gfxInitDefault(void);
+void gfxSetWide(bool enable);
 u8* gfxGetFramebuffer(gfxScreen_t screen, gfx3dSide_t side, u16* width, u16* height);
 void gfxSwapBuffers(void);
 void gfxFlushBuffers(void);
