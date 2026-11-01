@@ -12,25 +12,21 @@
 #                            is not in the package manager at all, so it is
 #                            built from its source.
 #
-# The script needs to be run as root, because devkitPro's installer puts
-# things in /opt.
+# The parts that need root ask for it themselves, so this can be run as
+# whoever is doing the build.
 
 set -euo pipefail
-
-if [ "$(id -u)" -ne 0 ]; then
-    echo "This script has to be run as root."
-    exit 2
-fi
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 
+export DEVKITPRO="${DEVKITPRO:-/opt/devkitpro}"
+
 echo "Installing devkitPro's package manager"
-export DEVKITPRO=/opt/devkitpro
-curl -fsSL https://apt.devkitpro.org/install-devkitpro-pacman | bash
+curl -fsSL https://apt.devkitpro.org/install-devkitpro-pacman | sudo bash
 
 echo "Installing the compiler and the SDK"
-dkp-pacman -Sy --noconfirm 3ds-dev 3dsxtool
+sudo dkp-pacman -Sy --noconfirm 3ds-dev 3dsxtool
 
 # makerom is not in the package manager. It is built from its source, which
 # needs a compiler and make; the runner has both.
@@ -44,3 +40,4 @@ fi
 
 echo "The tools are in place:"
 ls -l "$ROOT/tools/makerom/bin/makerom"
+ls -d "$DEVKITPRO"/devkitARM "$DEVKITPRO"/libctru/include

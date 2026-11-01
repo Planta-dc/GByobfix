@@ -12,6 +12,10 @@ on:
   pull_request:
   workflow_dispatch:
 
+env:
+  DEVKITPRO: /opt/devkitpro
+  DEVKITARM: /opt/devkitpro/devkitARM
+
 jobs:
   host:
     name: The host tests
@@ -25,13 +29,6 @@ jobs:
       - name: Run the tests
         run: make -C tools/host check
 
-      - name: Check the port against the SDK
-        run: |
-          sudo mkdir -p /opt/devkitpro
-          curl -fsSL https://apt.devkitpro.org/install-devkitpro-pacman | sudo bash
-          sudo dkp-pacman -Sy --noconfirm 3ds-dev
-          tools/host/check-libctru.sh "$DEVKITPRO/libctru/include"
-
   build-3ds:
     name: Build the 3DS port
     runs-on: ubuntu-latest
@@ -39,7 +36,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the tools
-        run: ./.github/scripts/install-3ds-packaging-tools.sh
+        run: bash .github/scripts/install-3ds-packaging-tools.sh
+
+      - name: Check the port against the SDK
+        run: tools/host/check-libctru.sh "$DEVKITPRO/libctru/include"
 
       - name: Build
         run: bash docker/ci-build.sh
@@ -62,7 +62,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install the tools
-        run: ./.github/scripts/install-3ds-packaging-tools.sh
+        run: bash .github/scripts/install-3ds-packaging-tools.sh
 
       - name: Build
         run: bash docker/ci-build.sh
