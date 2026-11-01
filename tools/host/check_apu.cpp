@@ -166,12 +166,14 @@ int main()
         return 1;
     }
 
-    /* The first sample is played once and the rest loop, so the loop
-     * starts at the second sample. */
-    int loopFrames = (int)(hostCsndSize[hostCsndChn[0]] / sizeof(s16)) - 1;
+    /* The first frames are played once and the rest loop, so the loop
+     * starts two frames in: the service reads the samples over the bus
+     * and the address it is given for the loop has to be a multiple of
+     * four bytes. */
+    int loopFrames = (int)(hostCsndSize[hostCsndChn[0]] / sizeof(s16)) - 2;
 
-    int leftPeak = peakOf(left + 1, loopFrames);
-    int rightPeak = peakOf(right + 1, loopFrames);
+    int leftPeak = peakOf(left + 2, loopFrames);
+    int rightPeak = peakOf(right + 2, loopFrames);
 
     printf("  Left ear:  peak %d.\n", leftPeak);
     printf("  Right ear: peak %d.\n", rightPeak);
@@ -246,8 +248,8 @@ int main()
         programSound(&one, &se2, 15, 0x01);
         runFrames(&se2, FRAMES_TO_RUN);
 
-        int l = peakOf(left + 1, loopFrames);
-        int r = peakOf(right + 1, loopFrames);
+        int l = peakOf(left + 2, loopFrames);
+        int r = peakOf(right + 2, loopFrames);
         printf("  To the first terminal: left %d, right %d.\n", l, r);
 
         if (l == 0 || r != 0) {
@@ -263,8 +265,8 @@ int main()
         programSound(&two, &se3, 15, 0x10);
         runFrames(&se3, FRAMES_TO_RUN);
 
-        int l = peakOf(left + 1, loopFrames);
-        int r = peakOf(right + 1, loopFrames);
+        int l = peakOf(left + 2, loopFrames);
+        int r = peakOf(right + 2, loopFrames);
         printf("  To the second terminal: left %d, right %d.\n", l, r);
 
         if (r == 0 || l != 0) {
@@ -328,7 +330,7 @@ int main()
         programSound(&quiet, &se4, 0, 0x11);
         runFrames(&se4, FRAMES_TO_RUN);
 
-        int q = peakOf(left + 1, loopFrames);
+        int q = peakOf(left + 2, loopFrames);
         if (q != 0) {
             printf("FAIL: a channel with its volume at zero still produced %d.\n", q);
             failures++;

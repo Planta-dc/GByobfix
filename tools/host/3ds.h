@@ -62,8 +62,8 @@ typedef enum {
 /* The sizes the real SDK reports. The framebuffer is 240 pixels wide and
  * 400 or 320 tall, which is the picture on its side. */
 #define GSP_SCREEN_WIDTH 240
-#define GSP_SCREEN_HEIGHT_TOP 240
-#define GSP_SCREEN_HEIGHT_TOP_2X 400
+#define GSP_SCREEN_HEIGHT_TOP 400
+#define GSP_SCREEN_HEIGHT_TOP_2X 800
 #define GSP_SCREEN_HEIGHT_BOTTOM 320
 
 /* The framebuffer of each screen, two of them so that the swap can be
@@ -118,7 +118,11 @@ Result csndPlaySound(int chn, u32 flags, u32 sampleRate, float vol, float pan,
                      void* data0, void* data1, u32 size);
 void CSND_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes);
 void CSND_SetPlayState(u32 channel, u32 value);
+void CSND_SetPlayStateR(u32 channel, u32 value);
 Result CSND_FlushDataCache(const void* adr, u32 size);
+
+/* The channels the service handed out. */
+extern u32 csndChannels;
 
 static inline u32 CSND_VOL(float vol, float pan)
 {

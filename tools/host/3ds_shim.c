@@ -9,7 +9,7 @@
 #define BOTTOM_BUFFERS 2
 
 /* The framebuffers are 16 bit: the port puts RGB565 in them. */
-#define TOP_SIZE (GSP_SCREEN_WIDTH * GSP_SCREEN_HEIGHT_TOP_2X * 2)
+#define TOP_SIZE (GSP_SCREEN_WIDTH * GSP_SCREEN_HEIGHT_TOP * 2)
 #define BOTTOM_SIZE (GSP_SCREEN_WIDTH * GSP_SCREEN_HEIGHT_BOTTOM * 2)
 
 static u8 topBuffer[TOP_BUFFERS][TOP_SIZE];
@@ -33,8 +33,9 @@ int hostGetBufferIndex(gfxScreen_t screen)
     return (screen == GFX_TOP) ? topIndex : bottomIndex;
 }
 
-/* The top screen is put into wide mode by the port. The stand-in has only
- * one shape for it, which is the wide one. */
+/* The port leaves the wide mode off, so the stand-in only has to know the
+ * normal shape of the top screen: 240 by 400, which is a screen 400
+ * across and 240 down. */
 void gfxSetWide(bool enable)
 {
     (void)enable;
@@ -56,7 +57,7 @@ u8* gfxGetFramebuffer(gfxScreen_t screen, gfx3dSide_t side, u16* width, u16* hei
      * side, so it is as many rows as the screen is wide. */
     if (screen == GFX_TOP) {
         if (width) *width = GSP_SCREEN_WIDTH;
-        if (height) *height = GSP_SCREEN_HEIGHT_TOP_2X;
+        if (height) *height = GSP_SCREEN_HEIGHT_TOP;
         return topBuffer[topIndex];
     }
 
@@ -100,6 +101,12 @@ Result csndInit(void)
 {
     return 0;
 }
+
+/* The channels the service hands out. On the console this is whatever
+ * the service decided to give the application; here every channel is
+ * available, so the port behaves the same as it would on a console that
+ * handed out all of them. */
+u32 csndChannels = 0xFFFFFFFF;
 
 /* What the sound service was told to play, so that a test can look at
  * the samples the transport is actually handing over. The real service
@@ -165,6 +172,18 @@ Result csndExecCmds(bool waitDone)
 void CSND_SetPlayState(u32 channel, u32 value)
 {
     (void)channel; (void)value;
+}
+
+/* The switch that says whether the console is making any sound at all.
+ * The port throws it before it sets the channels up; here it is only
+ * worth remembering that it was thrown. */
+int hostCsndPlaybackOn;
+
+void CSND_SetPlayStateR(u32 channel, u32 value)
+{
+    (void)channel;
+    if (value)
+        hostCsndPlaybackOn = 1;
 }
 
 Result CSND_FlushDataCache(const void* adr, u32 size)

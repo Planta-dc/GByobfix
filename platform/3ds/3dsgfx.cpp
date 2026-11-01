@@ -14,12 +14,6 @@
 #include "3dsgfx.h"
 #include "menu.h"
 
-/* The picture is scaled by this much when it is put on the screen. 3/2
- * gives 240x216, which fills the height of the screen and leaves a border
- * on the sides. */
-#define BLIT_SCALE_NUM 3
-#define BLIT_SCALE_DEN 2
-
 /* The block the blit works in. */
 #define BLIT_TILE 8
 
@@ -29,25 +23,36 @@ void drawPixel(u8* framebuffer, int x, int y, u32 color) {
     *ptr = (u16)color;
 }
 
+/*
+ * The framebuffer the game is drawn into, and the shape of the screen it
+ * is drawn on.
+ *
+ * The framebuffer is the picture on its side: its rows are the screen's
+ * columns and its columns are the screen's rows. So the screen is as wide
+ * as the framebuffer is tall and as high as the framebuffer is wide. The
+ * top screen's framebuffer is 240 by 400 in the normal mode and 240 by
+ * 800 in the wide one, so the width has to be asked for rather than
+ * assumed: a picture laid out for four hundred columns and put on an
+ * eight hundred column screen ends up squeezed into the left of it.
+ */
+static u8* gameFramebuffer(u16* width, u16* height) {
+    gfxScreen_t screen = gameScreen ? GFX_BOTTOM : GFX_TOP;
+    return gfxGetFramebuffer(screen, GFX_LEFT, width, height);
+}
+
 u8* gfxGetGameFramebuffer(void) {
     u16 width, height;
-    gfxScreen_t screen = gameScreen ? GFX_BOTTOM : GFX_TOP;
-    return gfxGetFramebuffer(screen, GFX_LEFT, &width, &height);
-}
-
-int gfxGetGameScreenWidth(void) {
-    return gameScreen ? BOTTOM_SCREEN_WIDTH : TOP_SCREEN_WIDTH;
-}
-
-int gfxGetGameScreenHeight(void) {
-    return TOP_SCREEN_HEIGHT;
+    return gameFramebuffer(&width, &height);
 }
 
 void gfxClearScreenFrame(void) {
-    u8* framebuffer = gfxGetGameFramebuffer();
-    size_t size = gameScreen ? BOTTOM_FRAMEBUFFER_SIZE : TOP_FRAMEBUFFER_SIZE;
+    u16 width = 0, height = 0;
+    u8* framebuffer = gameFramebuffer(&width, &height);
 
-    memset(framebuffer, 0, size);
+    if (framebuffer == NULL || width == 0 || height == 0)
+        return;
+
+    memset(framebuffer, 0, (size_t)width * height * GFX_BYTES_PER_PIXEL);
 }
 
 void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
@@ -110,11 +115,32 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
 }
 
 void gfxPresentGameFrame(void) {
-    u8* framebuffer = gfxGetGameFramebuffer();
-    int width = gfxGetGameScreenWidth();
-    int height = gfxGetGameScreenHeight();
-    int scaledWidth = GB_WIDTH * BLIT_SCALE_NUM / BLIT_SCALE_DEN;
-    int scaledHeight = GB_HEIGHT * BLIT_SCALE_NUM / BLIT_SCALE_DEN;
+    u16 fbWidth = 0, fbHeight = 0;
+    u8* framebuffer = gameFramebuffer(&fbWidth, &fbHeight);
+
+    if (framebuffer == NULL || fbWidth == 0 || fbHeight == 0)
+        return;
+
+    /* The screen is the framebuffer on its side: as wide as the
+     * framebuffer is tall, as high as it is wide. */
+    int width = fbHeight;
+    int height = fbWidth;
+
+    /* The picture is scaled to fit the screen and keeps its shape. The
+     * Game Boy's screen is ten by nine and the console's is five by
+     * three, so on the top screen it is the height that is filled and
+     * the width that is left over. */
+    int num, den;
+    if (GB_WIDTH * height <= width * GB_HEIGHT) {
+        num = height;
+        den = GB_HEIGHT;
+    } else {
+        num = width;
+        den = GB_WIDTH;
+    }
+
+    int scaledWidth = (GB_WIDTH * num) / den;
+    int scaledHeight = (GB_HEIGHT * num) / den;
 
     /* The framebuffers are doubled, and each one holds the picture from
      * two frames ago. The picture does not cover the whole screen, so
@@ -123,14 +149,14 @@ void gfxPresentGameFrame(void) {
 
     gfxBlitGameFrame(framebuffer, width, height, gameFrame,
                      (width - scaledWidth) / 2, (height - scaledHeight) / 2,
-                     BLIT_SCALE_NUM, BLIT_SCALE_DEN);
+                     num, den);
 
     /* The display controller reads the framebuffer over the bus, and the
      * processor's copy of it is in its cache, so what was drawn has to be
      * written out before the frame is shown. Without this the screen
      * shows the picture as it was, or as it was a few frames ago. */
     GSPGPU_FlushDataCache(framebuffer,
-                          gameScreen ? BOTTOM_FRAMEBUFFER_SIZE : TOP_FRAMEBUFFER_SIZE);
+                          (size_t)fbWidth * fbHeight * GFX_BYTES_PER_PIXEL);
 
     /* The screen is not swapped here. The swap is done once per frame,
      * where the console is as well, because a second swap in the same
