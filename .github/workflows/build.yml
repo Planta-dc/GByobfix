@@ -1,0 +1,84 @@
+name: build
+
+# The 3DS port is built from source here, and the checks that can be run
+# without a console are run here too.
+#
+# The build job is the first time the port has ever been linked. Until it
+# passes, nothing about this port has been shown to work on a console, and
+# the documentation says so.
+#
+# Each part of the build is its own step. That is not tidiness: a job whose
+# steps are all one "build" tells you nothing when it fails, because the
+# reason is buried in a log that not every environment can download. When
+# the steps are separate, the API says which part of the build broke, and
+# docker/ci-step.sh puts the reason in an annotation on the step.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  host:
+    name: The host tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the tests
+        run: make -C tools/host
+
+      - name: Run the tests
+        run: make -C tools/host check
+
+  build-3ds:
+    name: Build the 3DS port
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check the port against the SDK
+        run: bash docker/ci-step.sh sdk-check
+
+      - name: Check that every symbol has a home
+        run: bash docker/ci-step.sh link-check
+
+      - name: Build the .3dsx
+        run: bash docker/ci-step.sh 3dsx
+
+      - name: Build makerom
+        run: bash docker/ci-step.sh makerom
+
+      - name: Build the .cia
+        run: bash docker/ci-step.sh cia
+
+      - name: Build the .3ds
+        run: bash docker/ci-step.sh 3ds
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: gameyob-3ds
+          path: |
+            platform/3ds/gameyob.3dsx
+            platform/3ds/gameyob.cia
+            platform/3ds/gameyob.3ds
+
+  release:
+    name: The 3DS port, as a release
+    needs: build-3ds
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: bash docker/ci-step.sh all
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            platform/3ds/gameyob.3dsx
+            platform/3ds/gameyob.cia
+            platform/3ds/gameyob.3ds
