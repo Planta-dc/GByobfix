@@ -1,0 +1,16 @@
+*.[od]
+*~
+*.gb
+*.gbc
+*.swp
+*.elf
+*.3ds
+*.3dsx
+*.cia
+*.smdh
+build/
+gameyob.nds
+gameyob
+gameyob.ini
+LOG
+.vscode
