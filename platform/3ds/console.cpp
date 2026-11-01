@@ -64,6 +64,10 @@ void printLog(const char* format, ...) {
 }
 void printAndWait(const char* format, ...) {
     va_list args;
+
+    /* This asks the user for a key, so the text has to be seen. */
+    consoleSetSuspended(false);
+
     va_start(args, format);
 
     vprintf(format, args);

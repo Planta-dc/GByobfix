@@ -18,6 +18,10 @@
 #include "gbgfx.h"
 #include "gbs.h"
 #include "gbmanager.h"
+#ifdef _3DS
+#include "printconsole.h"
+#include "ui3ds.h"
+#endif
 
 const int MENU_DS   = 1;
 const int MENU_3DS  = 2;
@@ -380,26 +384,6 @@ void localLinkFunc(int value) {
     gb2->loadSave(2);
 }
 
-struct MenuOption {
-    const char* name;
-    void (*function)(int);
-    int numValues;
-    const char* values[10];
-    int defaultSelection;
-    int platforms;
-
-    bool enabled;
-    int selection;
-};
-struct SubMenu {
-    const char *name;
-    int numOptions;
-    MenuOption options[10];
-
-    int selection;
-};
-
-
 SubMenu menuList[] = {
     {
         "ROM",
@@ -530,6 +514,9 @@ void displayMenu() {
 void closeMenu() {
     menuOn = false;
     setPrintConsole(menuConsole);
+#ifdef _3DS
+    consoleSetSuspended(false);
+#endif
     clearConsole();
     mgr_unpause();
 }
@@ -602,6 +589,12 @@ int menuGetNumRows() {
 }
 
 void redrawMenu() {
+#ifdef _3DS
+    /* On the 3DS the menu is a set of panels drawn into the framebuffer,
+     * not a page of text, so the console is put away while it is up. */
+    consoleSetSuspended(true);
+    uiDrawMenu();
+#else
     PrintConsole* oldConsole = getPrintConsole();
     setPrintConsole(menuConsole);
     clearConsole();
@@ -698,6 +691,8 @@ void redrawMenu() {
     }
 
     setPrintConsole(oldConsole);
+#endif
+
 }
 
 // Called each vblank while the menu is on
@@ -786,6 +781,17 @@ void updateMenu() {
 // Message will be printed immediately, but also stored in case it's overwritten 
 // right away.
 void printMenuMessage(const char* s) {
+#ifdef _3DS
+    /* The 3DS shows the message in the menu's own header, so the menu is
+     * drawn again to show it. */
+    strncpy(printMessage, s, 33);
+
+    if (isMenuOn())
+        uiDrawMenu();
+
+    return;
+#endif
+
     int width = consoleGetWidth();
     int height = consoleGetHeight();
     int rows = menuGetNumRows();
@@ -811,9 +817,19 @@ void printMenuMessage(const char* s) {
 
 void displaySubMenu(void (*updateFunc)()) {
     subMenuUpdateFunc = updateFunc;
+#ifdef _3DS
+    /* A submenu is drawn as text, so the console comes back for it, and
+     * the screen is cleared so that the panels of the menu are not left
+     * behind the text. */
+    consoleSetSuspended(false);
+    clearConsole();
+#endif
 }
 void closeSubMenu() {
     subMenuUpdateFunc = NULL;
+#ifdef _3DS
+    consoleSetSuspended(true);
+#endif
     doAtVBlank(redrawMenu);
 }
 

@@ -55,6 +55,28 @@ the parallelism belongs: `make -j8` at the top level would start the
 `.3dsx`, the `.cia` and the `.3ds` rules at the same time, and they all
 write to the same directory.
 
+## The interface
+
+The 3DS port draws its own interface: the menu and the file browser are
+panels of colour and text, not pages of console output. The drawing kit is
+`platform/3ds/uigfx.cpp` (the rasteriser), `platform/3ds/uifont.cpp` (the
+fonts) and `platform/3ds/uiscreens.cpp` (the panels), and
+`platform/3ds/ui3ds.cpp` puts GameYob's own menu and file list on the
+screen with them. The text console is still there for what it is good at -
+the frame rate, the log and the menus that are drawn as text - but it is
+put out of the way while the panels are up.
+
+The kit, the fonts and the look of the panels come from
+[GBabe](https://github.com/Planta-dc/3ds-GBabe), the other Game Boy
+emulator for the 3DS, which is MIT licensed; the licences are in
+`platform/3ds/third_party/`. Only the look was taken. The code that draws
+the menu is this port's own, and GBabe's pictures and sounds were not
+brought over.
+
+The screens are 16 bits a pixel (RGB565) rather than 24, so a panel can be
+copied into the framebuffer without being converted, and the game's
+picture takes a third less memory and a third less of the bus.
+
 ## The host tests
 
 The port's own files - the renderer, the blit, the frame clock and the
@@ -103,8 +125,7 @@ The port has been checked against the current SDK's headers, and the
 renderer, the blit, the frame clock and the sound transport have been run
 and checked on a development machine.
 
-The continuous integration is set up to link it and to keep the result,
-but until that job has run the port has never been linked, and it has
-never been run on a console or on an emulator. Nothing in this repository
-can show either of those, and `platform/3ds/3DS_PERFORMANCE.md` says the
-same thing about the measurements in it.
+The continuous integration links it and keeps the result, so the port has
+been linked; it has never been run on a console or on an emulator. Nothing
+in this repository can show that, and `platform/3ds/3DS_PERFORMANCE.md`
+says the same thing about the measurements in it.

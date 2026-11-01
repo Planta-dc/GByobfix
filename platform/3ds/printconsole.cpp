@@ -27,6 +27,13 @@ const u16 BG_COLOR = rgb565(0x00, 0x00, 0x00);
  */
 static PrintConsole* activeConsole = NULL;
 
+/* Whether the console has been put away for the graphical interface. */
+static bool consoleSuspended = false;
+
+void consoleSetSuspended(bool suspended) {
+    consoleSuspended = suspended;
+}
+
 static PrintConsole mainConsole;
 
 /* The screen the console is on, and whether it has to be redrawn. */
@@ -332,6 +339,11 @@ static ssize_t con_write(struct _reent *r, void *fd, const char *ptr, size_t len
 
 	if(!tmp || len<=0) return -1;
 
+	/* While the graphical interface is up the console says nothing, but
+	 * it still swallows the text, so that whatever prints does not end
+	 * up in the middle of the interface later. */
+	if (consoleSuspended) return len;
+
 	i = 0;
 
 	while(i<len) {
@@ -515,6 +527,9 @@ void consoleAfterSwap() {
     u16 width, height;
     u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
 
+    /* The copy is made even while the console is suspended: the graphical
+     * interface is drawn into the same framebuffer, and without the copy
+     * the screen would go back to what it held two frames ago. */
     if (framebuffer != lastFramebuffer && lastFramebuffer) {
         int size = activeConsole->consoleWidth * CHAR_WIDTH *
                    GFX_FB_STRIDE * GFX_BYTES_PER_PIXEL;

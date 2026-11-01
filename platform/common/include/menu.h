@@ -23,6 +23,46 @@ extern bool windowDisabled;
 
 extern PrintConsole* menuConsole;
 
+/*
+ * The menu.
+ *
+ * The options and the pages are declared here so that a platform can draw
+ * them however it likes: the 3DS draws them as panels of colour and text
+ * rather than as a text console.
+ */
+struct MenuOption {
+    const char* name;
+    void (*function)(int);
+    int numValues;
+    const char* values[10];
+    int defaultSelection;
+    int platforms;
+
+    bool enabled;
+    int selection;
+};
+struct SubMenu {
+    const char *name;
+    int numOptions;
+    MenuOption options[10];
+
+    int selection;
+};
+
+extern SubMenu menuList[];
+extern const int numMenus;
+
+/* Which platforms this build of the port is: an option is only shown when
+ * its platform bit is in here. */
+extern const int MENU_BITMASK;
+
+/* Which page and which option are selected, and -1 for the page itself. */
+extern int menu;
+extern int option;
+
+/* The message shown at the bottom of the menu, if any. */
+extern char printMessage[33];
+
 extern bool fpsOutput;
 extern bool timeOutput;
 
