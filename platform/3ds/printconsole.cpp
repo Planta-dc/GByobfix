@@ -16,6 +16,10 @@ PrintConsole* currentConsole = NULL;
 
 PrintConsole mainConsole;
 
+/* The screen the console is on, and whether it has to be redrawn. */
+gfxScreen_t consoleScreen = GFX_BOTTOM;
+bool consoleRedraw = false;
+
 static void consoleCls(char);
 
 void newRow() {
@@ -29,8 +33,8 @@ void newRow() {
         for (int j=currentConsole->consoleHeight-2; j>=0; j--) {
             for (int y=0; y<CHAR_HEIGHT; y++) {
                 for (int x=0; x<currentConsole->consoleWidth*CHAR_WIDTH; x++) {
-                    drawPixel(currentConsole->framebuffer, x, j*CHAR_HEIGHT+y,
-                            getPixel(currentConsole->framebuffer, x, (j+1)*CHAR_HEIGHT+y));
+                    drawPixel((u8*)currentConsole->frameBuffer, x, j*CHAR_HEIGHT+y,
+                            getPixel((u8*)currentConsole->frameBuffer, x, (j+1)*CHAR_HEIGHT+y));
                 }
             }
         }
@@ -46,16 +50,16 @@ void consoleDrawChar(char c) {
         for (int cx=0; cx<CHAR_WIDTH; cx+=2) {
             u8 byte = default_font_bin[c*CHAR_WIDTH*CHAR_HEIGHT/2 + cy*4 + cx/2];
             if (byte&0xf)
-                drawPixel(currentConsole->framebuffer, x+cx, y+cy, TEXT_COLOR);
+                drawPixel((u8*)currentConsole->frameBuffer, x+cx, y+cy, TEXT_COLOR);
             else
-                drawPixel(currentConsole->framebuffer,  x+cx, y+cy, BG_COLOR);
+                drawPixel((u8*)currentConsole->frameBuffer,  x+cx, y+cy, BG_COLOR);
             if (byte>>4)
-                drawPixel(currentConsole->framebuffer,  x+cx+1, y+cy, TEXT_COLOR);
+                drawPixel((u8*)currentConsole->frameBuffer,  x+cx+1, y+cy, TEXT_COLOR);
             else
-                drawPixel(currentConsole->framebuffer,  x+cx+1, y+cy, BG_COLOR);
+                drawPixel((u8*)currentConsole->frameBuffer,  x+cx+1, y+cy, BG_COLOR);
         }
     }
-    currentConsole->redraw = true;
+    consoleRedraw = true;
 }
 void consolePrintChar(char c) {
 	if (c == 0)
@@ -348,7 +352,7 @@ ssize_t con_write(struct _reent *r,int fd,const char *ptr, size_t len) {
 	return count;
 }
 
-static const devoptab_t dotab_stdout = {
+static devoptab_t dotab_stdout = {
 	"con",
 	0,
 	NULL,
@@ -365,9 +369,9 @@ void consoleInitBottom() {
     currentConsole->cursorY = 0;
     currentConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
     currentConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
-    currentConsole->redraw = true;
+    consoleRedraw = true;
 
-    currentConsole->screen = GFX_BOTTOM;
+    consoleScreen = GFX_BOTTOM;
     consoleCheckFramebuffers();
 
     devoptab_list[STD_OUT] = &dotab_stdout;
@@ -378,7 +382,7 @@ void consoleInitBottom() {
 }
 
 void consoleSetScreen(gfxScreen_t screen) {
-    if (screen != currentConsole->screen) {
+    if (screen != consoleScreen) {
         consoleCls('2');
         if (screen == 0) {
             currentConsole->consoleWidth = TOP_SCREEN_WIDTH / CHAR_WIDTH;
@@ -388,34 +392,50 @@ void consoleSetScreen(gfxScreen_t screen) {
             currentConsole->consoleWidth = BOTTOM_SCREEN_WIDTH / CHAR_WIDTH;
             currentConsole->consoleHeight = BOTTOM_SCREEN_HEIGHT / CHAR_HEIGHT;
         }
-        currentConsole->screen = screen;
+        consoleScreen = screen;
         consoleCheckFramebuffers();
         consoleCls('2');
     }
 }
 
-// Called after buffers are swapped
+/*
+ * The framebuffer the console draws into.
+ *
+ * libctru hands out the framebuffer that is not on the display, and the
+ * display shows the other one when the buffers are swapped. The console
+ * therefore draws into the current one, and consoleAfterSwap() copies its
+ * part of the screen into the other one when the buffers are swapped.
+ */
+static u8* lastFramebuffer = NULL;
+
 void consoleCheckFramebuffers() {
-    if (currentConsole->redraw) {
+    u16 width, height;
+    u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
+    currentConsole->frameBuffer = (u16*)framebuffer;
+    lastFramebuffer = framebuffer;
+    consoleRedraw = false;
+}
+
+void consoleAfterSwap() {
+    u16 width, height;
+    u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
+
+    if (framebuffer != lastFramebuffer && lastFramebuffer) {
         int size = (currentConsole->consoleWidth*CHAR_WIDTH *
                 currentConsole->consoleHeight*CHAR_HEIGHT) * 3;
-        memcpy(gfxGetInactiveFramebuffer(currentConsole->screen, GFX_LEFT),
-                gfxGetActiveFramebuffer(currentConsole->screen, GFX_LEFT),
-                size);
-        currentConsole->redraw = false;
+        memcpy(framebuffer, lastFramebuffer, size);
     }
-    currentConsole->framebuffer = gfxGetInactiveFramebuffer(currentConsole->screen, GFX_LEFT);
+
+    lastFramebuffer = framebuffer;
+    currentConsole->frameBuffer = (u16*)framebuffer;
 }
 
 void consoleFlush() {
     fflush(stdout);
 
-    int size = (currentConsole->consoleWidth*CHAR_WIDTH *
-            currentConsole->consoleHeight*CHAR_HEIGHT) * 3;
-    memcpy(gfxGetActiveFramebuffer(currentConsole->screen, GFX_LEFT),
-            gfxGetInactiveFramebuffer(currentConsole->screen, GFX_LEFT),
-            size);
-
+    /* The display controller reads the framebuffer over the bus, so what
+     * has been drawn into it has to be flushed out of the cache before it
+     * is shown. */
     gfxFlushBuffers();
 }
 

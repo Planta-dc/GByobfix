@@ -1,14 +1,24 @@
+/*
+ * The file system layer.
+ *
+ * The old port was written against libctru v0.6, which had FS_makePath,
+ * PATH_CHAR and FS_archive. None of those exist in current libctru: the
+ * paths are now FS_Path values, made with fsMakePath, and the archive is
+ * a u64 handle rather than a struct. This is the same interface, written
+ * against the current library.
+ */
+
 #include <stdio.h>
 #include <stdarg.h>
 #include <stdlib.h>
+#include <string.h>
 #include <3ds.h>
 #include <3ds/types.h>
-#include <3ds/svc.h>
-#include <cwchar>
+#include <3ds/services/fs.h>
 #include "io.h"
 #include "error.h"
 
-FS_archive sdmcArchive;
+static FS_Archive sdmcArchive;
 
 struct FileHandle {
     Handle handle;
@@ -20,12 +30,12 @@ struct DirStruct {
     struct dirent activeEntry;
 };
 
-char fs_cwd[MAX_FILENAME_LEN];
-DirStruct dir;
+static char fs_cwd[MAX_FILENAME_LEN];
+static DirStruct dir;
 
-// private functions
+/* private functions */
 
-void fs_relativePath(char* dest, const char* src) {
+static void fs_relativePath(char* dest, const char* src) {
     bool back = false;
     if (strcmp(src, "..") == 0 || strcmp(src, "../") == 0) {
         if (dest != fs_cwd)
@@ -43,7 +53,8 @@ void fs_relativePath(char* dest, const char* src) {
     }
 
     while (strlen(dest) > 1 &&
-            strrchr(dest, '/') != 0 && strrchr(dest, '/') == dest+strlen(dest)-1)
+            strrchr(dest, '/') != 0 &&
+            strrchr(dest, '/') == dest+strlen(dest)-1)
         *strrchr(dest, '/') = '\0';
 
     if (back) {
@@ -55,23 +66,11 @@ void fs_relativePath(char* dest, const char* src) {
     }
 }
 
-// public functions
+/* public functions */
 
 void fs_init() {
-    /*
-    // These checks don't seem to be working?
-    u32 detected, writable;
-    FSUSER_IsSdmcDetected(NULL, &detected);
-    if (!detected)
-        fatalerr("SD card not detected.");
-    FSUSER_IsSdmcWritable(NULL, &writable);
-    if (!writable)
-        fatalerr("SD card not writable.");
-    */
-
-
-    sdmcArchive = (FS_archive){0x9, FS_makePath(PATH_EMPTY, "")};
-    FSUSER_OpenArchive(NULL, &sdmcArchive);
+    sdmcArchive = 0;
+    FSUSER_OpenArchive(&sdmcArchive, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""));
 
     strcpy(fs_cwd, "");
     dir.handle = 0;
@@ -107,10 +106,13 @@ FileHandle* file_open(const char* filename, const char* flags) {
     fs_relativePath(buffer, filename);
 
     FileHandle* fileHandle = (FileHandle*)malloc(sizeof(FileHandle));
-    Result res = FSUSER_OpenFile(NULL, &fileHandle->handle, sdmcArchive,
-            FS_makePath(PATH_CHAR, buffer), openFlags, FS_ATTRIBUTE_NONE);
+    if (!fileHandle)
+        return NULL;
 
-    if (res) {
+    Result res = FSUSER_OpenFile(&fileHandle->handle, sdmcArchive,
+            fsMakePath(PATH_ASCII, buffer), openFlags, 0);
+
+    if (R_FAILED(res)) {
         free(fileHandle);
         return NULL;
     }
@@ -179,7 +181,7 @@ void file_seek(FileHandle* fileHandle, int pos, int origin) {
             fileHandle->head += pos;
             break;
         case SEEK_END:
-            fileHandle->head = file_getSize(fileHandle) - pos;
+            fileHandle->head = file_getSize(fileHandle) + pos;
             break;
     }
 }
@@ -219,24 +221,28 @@ bool file_exists(const char* filename) {
 void fs_deleteFile(const char* filename) {
     char buffer[MAX_FILENAME_LEN];
     fs_relativePath(buffer, filename);
-    FSUSER_DeleteFile(NULL, sdmcArchive, FS_makePath(PATH_CHAR, buffer));
+    FSUSER_DeleteFile(sdmcArchive, fsMakePath(PATH_ASCII, buffer));
 }
 
 struct dirent* fs_readdir() {
     u32 numEntries = 0;
-    FS_dirent entry;
+    FS_DirectoryEntry entry;
     FSDIR_Read(dir.handle, &numEntries, 1, &entry);
 
     if (numEntries == 0)
         return 0;
 
+    /* The name comes back as UTF-16. The rest of the emulator works in
+     * bytes, so it is narrowed here; a name that is not ASCII becomes a
+     * question mark rather than nonsense. */
     for (int i=0; i<MAX_FILENAME_LEN; i++) {
-        dir.activeEntry.d_name[i] = (char)entry.name[i];
-        if (dir.activeEntry.d_name[i] == '\0')
+        u16 c = entry.name[i];
+        dir.activeEntry.d_name[i] = (c < 0x80) ? (char)c : '?';
+        if (c == '\0')
             break;
     }
     dir.activeEntry.d_type = 0;
-    if (entry.isDirectory)
+    if (entry.attributes & FS_ATTRIBUTE_DIRECTORY)
         dir.activeEntry.d_type |= DT_DIR;
 
     return &dir.activeEntry;
@@ -245,6 +251,7 @@ struct dirent* fs_readdir() {
 void fs_getcwd(char* dest, size_t maxLen) {
     strncpy(dest, fs_cwd, maxLen);
 }
+
 void fs_chdir(const char* s) {
     char buffer[MAX_FILENAME_LEN];
     fs_relativePath(buffer, s);
@@ -252,14 +259,16 @@ void fs_chdir(const char* s) {
     if (dir.handle != 0)
         FSDIR_Close(dir.handle);
 
-    Result res = FSUSER_OpenDirectory(NULL, &dir.handle, sdmcArchive,
-            FS_makePath(PATH_CHAR, buffer));
+    Handle handle = 0;
+    Result res = FSUSER_OpenDirectory(&handle, sdmcArchive,
+            fsMakePath(PATH_ASCII, buffer));
 
-    if (res) {
-        FSUSER_OpenDirectory(NULL, &dir.handle, sdmcArchive,
-                FS_makePath(PATH_CHAR, fs_cwd));
+    if (R_FAILED(res)) {
+        FSUSER_OpenDirectory(&dir.handle, sdmcArchive,
+                fsMakePath(PATH_ASCII, fs_cwd));
         return;
     }
 
+    dir.handle = handle;
     strcpy(fs_cwd, buffer);
 }

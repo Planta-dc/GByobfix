@@ -1,99 +1,56 @@
+/*
+ * GameYob's APU, and the bridge to the 3DS sound service.
+ *
+ * The APU below is GameYob's own and is unchanged: the same channel
+ * counters, the same envelopes, the same duty cycles, the same noise
+ * tables. What has changed is where the samples go.
+ *
+ * The old port wrote them into a pair of buffers and handed a whole buffer
+ * to the sound service every eight frames, restarting the service each
+ * time. A restart cuts the sound off at the point it had reached and
+ * starts again, so the audio was chopped into eighths of a second and the
+ * service was asked for a rate no hardware has.
+ *
+ * Now the samples go to audio.c, which keeps a ring of samples playing and
+ * takes them as they are produced. See audio.h for what that does and does
+ * not promise.
+ */
+
 #include <3ds.h>
 #include "soundengine.h"
 #include "gameboy.h"
 #include "menu.h"
 #include "noise.h"
 #include "console.h"
+#include "audio.h"
 #include <math.h>
 #include <time.h>
 
 // 127 bytes
 u8 lfsr7NoiseSample[] = {
-0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0x60, 0xa0
+0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0x60, 0xa0, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0xa0, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0xa0, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0x60, 0xa0, 0x60, 0x60, 0x60, 0xa0
 };
 
+/*
+ * The samples of one frame, waiting to be handed to the transport.
+ *
+ * The APU produces 836 samples a frame (70224 cycles at 84 cycles a
+ * sample). The buffer is a little larger than that, because a frame can
+ * start part way through a sample and end part way through the next one.
+ */
+#define SAMPLE_BUFFER_SIZE (AUDIO_FRAMES_PER_GB_FRAME + 4)
+static s16 sampleLeft[SAMPLE_BUFFER_SIZE];
+static s16 sampleRight[SAMPLE_BUFFER_SIZE];
+static int sampleCount;
 
-extern "C" Result CSND_sharedmemtype0_cmd9(u32, u32);
-
-void CSND_setchannel_enabled(u32 channel, u32 value)
-{
-	u32 cmdparams[0x18>>2];
-
-	memset(cmdparams, 0, 0x18);
-
-	cmdparams[0] = channel & 0x1f;
-	cmdparams[1] = value;
-
-	CSND_writesharedmem_cmdtype0(0x0, (u8*)&cmdparams);
-}
-
-
-
-#define FRAMES_PER_BUFFER 8
-
+/* The interval the APU is sampled at, in Game Boy cycles. This is
+ * GameYob's own: 84 cycles is 49932.57 Hz. */
 #define CYCLES_UNTIL_SAMPLE (0x54)
-#define CSND_FREQUENCY (CYCLES_PER_FRAME * 59.7 / CYCLES_UNTIL_SAMPLE)
-#define CSND_BUFFER_SIZE ((CYCLES_PER_FRAME / CYCLES_UNTIL_SAMPLE) * FRAMES_PER_BUFFER)
 
-
-bool csndInitialized = false;
-
-s16* bufferDat = (s16*)linearAlloc(2*CSND_BUFFER_SIZE*2);
-
-s16* buffers[2];
-int playingBuffer = 0;
-int recordingBuffer = 1;
-int recordingPos = 0;
-int framecnt;
-
+/* Which of the Game Boy's four sound channels are switched on. The
+ * emulator turns them on and off as the game writes to the sound
+ * registers, and a channel that is off produces no samples. */
 bool chanEnabled[4] = {true, true, true, true};
-
-
-void csnd_init() {
-    Result r = CSND_initialize(NULL);
-
-    csndInitialized = r == 0;
-}
-
-void initSampler() {
-    buffers[0] = bufferDat;
-    buffers[1] = bufferDat+CSND_BUFFER_SIZE;
-
-    playingBuffer = 0;
-    recordingBuffer = 1;
-    recordingPos = 0;
-    framecnt = 0;
-}
-
-// Called once every 4 cycles
-void addSample(s16 sample) {
-    if (recordingPos >= CSND_BUFFER_SIZE) {
-        printLog("RECORD LOOP\n");
-        return;
-    }
-    buffers[recordingBuffer][recordingPos++] = sample;
-}
-
-void swapBuffers() {
-    if (!csndInitialized)
-        return;
-
-    if (--framecnt <= 0) {
-        framecnt = FRAMES_PER_BUFFER;
-
-        playingBuffer = !playingBuffer;
-        recordingBuffer = !recordingBuffer;
-
-        if (recordingPos != CSND_BUFFER_SIZE) {
-            printLog("recordingpos %d\n", recordingPos);
-        }
-        recordingPos = 0;
-
-        u32* addr = (u32*)buffers[playingBuffer];
-        CSND_playsound(8+playingBuffer, 0, CSND_ENCODING_PCM16, CSND_FREQUENCY, addr, addr, CSND_BUFFER_SIZE*2, 0, 0);
-    }
-}
-
 
 SoundEngine::SoundEngine(Gameboy* g)
 {
@@ -117,7 +74,7 @@ void SoundEngine::init() {
     lfsr = 0;
     chan3WavPos = 0;
 
-    initSampler();
+    sampleCount = 0;
 
     refresh();
 }
@@ -149,10 +106,12 @@ void SoundEngine::refresh() {
 
 void SoundEngine::mute() {
     muted = true;
+    audio_set_muted(true);
 }
 
 void SoundEngine::unmute() {
     muted = false;
+    audio_set_muted(false);
 }
 
 
@@ -258,15 +217,12 @@ void SoundEngine::updateSound(int cycles)
 		}
 	}
 
-    if (!csndInitialized)
-        return;
-
     cyclesUntilSample -= cycles;
     while (cyclesUntilSample <= 0) {
         int c = CYCLES_UNTIL_SAMPLE;
         cyclesUntilSample += c;
 
-        s16 tone = 0, tone1 = 0, tone2 = 0;
+        s16 tone1 = 0, tone2 = 0;
 
         for (int j=0; j<2; j++) {
             if (!chanEnabled[j])
@@ -370,9 +326,14 @@ void SoundEngine::updateSound(int cycles)
         tone1 *= SO1Vol;
         tone2 *= SO2Vol;
 
-        tone = tone1 + tone2;
-
-        addSample(tone*0x10);
+        /* GameYob's sound is stereo: the first channel goes to the left
+         * and the second to the right. The old port mixed them into one
+         * channel and threw the stereo away. */
+        if (sampleCount < SAMPLE_BUFFER_SIZE) {
+            sampleLeft[sampleCount] = tone1*0x10;
+            sampleRight[sampleCount] = tone2*0x10;
+            sampleCount++;
+        }
     }
 }
 
@@ -386,7 +347,13 @@ void SoundEngine::setSoundEventCycles(int cycles) {
 void SoundEngine::soundUpdateVBlank() {
     if (soundDisabled)
         return;
-    swapBuffers();
+
+    /* The frame's samples go to the transport, which keeps them until the
+     * sound service wants them. */
+    if (sampleCount > 0) {
+        audio_submit(sampleLeft, sampleRight, sampleCount);
+        sampleCount = 0;
+    }
 }
 
 void SoundEngine::updateSoundSample() {

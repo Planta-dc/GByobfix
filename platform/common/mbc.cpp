@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include "gameboy.h"
 #include "console.h"
 #include "inputhelper.h"

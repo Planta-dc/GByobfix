@@ -1,3 +1,5 @@
+#include <3ds.h>
+
 volatile int linkReceivedData;
 volatile int linkSendData;
 volatile bool transferWaiting;
@@ -14,9 +16,9 @@ void nifiSendPacket(u8 command, u8* data, int dataLen) {}
 void nifiHostMenu(int value) {}
 void nifiClientMenu(int value) {}
 
-bool nifiIsHost() {}
-bool nifiIsClient() {}
-bool nifiIsLinked() {}
+bool nifiIsHost() { return false; }
+bool nifiIsClient() { return false; }
+bool nifiIsLinked() { return false; }
 
 void nifiCheckInput() {}
 void nifiUpdateInput() {}

@@ -32,6 +32,22 @@ file provided with the newer releases of GameYob DS.
 - Gameboy Printer emulation
 - GBS music playback
 
+## The 3DS port
+
+The 3DS port in `platform/3ds` has been rewritten: the renderer draws into
+a picture that is scaled onto the screen instead of drawing into the
+framebuffer pixel by pixel, the port keeps its own frame clock instead of
+following the display's vertical blank, and the sound is a ring that is
+never restarted instead of a buffer that is handed over every eighth of a
+second. GameYob's own emulator and its own APU are unchanged.
+
+`platform/3ds/3DS_PERFORMANCE.md` says what was measured and what was
+not, and `BUILD.md` says how to build it and how to run the checks. The
+checks are the interesting part: the renderer is compared with the
+renderer it replaced, pixel for pixel, over randomised Game Boy states,
+and the frame clock and the sound transport are checked against a clock
+the test drives.
+
 ## More info
 
 See the GBAtemp thread for more information:

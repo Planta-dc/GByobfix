@@ -1,4 +1,11 @@
 #include <stdlib.h>
+
+#ifdef _3DS
+/* The touch key is the 3DS's own, and the menu is opened by touching the
+ * screen as well as by pressing a button. */
+#include <3ds.h>
+#endif
+
 #include "gbmanager.h"
 #include "inputhelper.h"
 #include "gameboy.h"

@@ -1,4 +1,10 @@
 # Type "make 3ds", "make cia", or "make [3dsx]" to build.
+#
+# The build recurses into build/, and the recursion is where the
+# parallelism belongs: "make -j8" at the top level would start the 3dsx,
+# the cia and the 3ds rules at the same time, and they all write to the
+# same directory. Use "make -j8" for the default target, or set JOBS when
+# calling the others.
 
 #---------------------------------------------------------------------------------
 .SUFFIXES:
@@ -33,13 +39,19 @@ DATA		:=	data
 INCLUDES	:=	include ../common/include
 
 
-APP_TITLE		:= GameYob 3DS `git describe --always --abbrev=4`
+APP_TITLE		:= GameYob 3DS
 APP_DESCRIPTION := Gameboy & Gameboy Color emulator
 APP_AUTHOR		:= Drenn
 APP_ICON		:= $(TOPDIR)/icon.png
 
 
 EMBEDDED_ROM := false
+
+# makerom is not part of devkitARM. It is built from source by
+# .github/scripts/install-3ds-packaging-tools.sh, which puts it in
+# tools/makerom/bin. Set MAKEROM to point somewhere else if it is
+# installed elsewhere.
+MAKEROM ?= $(TOPDIR)/../../tools/makerom/bin/makerom
 
 export	OUTPUT_FORMAT ?= 3dsx
 
@@ -77,15 +89,15 @@ LIBS	:= -lctru
 # include and lib
 #---------------------------------------------------------------------------------
 LIBDIRS	:= $(CTRULIB)
- 
-  
+
+
 #---------------------------------------------------------------------------------
 # no real need to edit anything past this point unless you need to add additional
 # rules for different file extensions
 #---------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR))) # make not invoked from "build" directory
 #---------------------------------------------------------------------------------
- 
+
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
 
@@ -111,7 +123,6 @@ else
 	export LD	:=	$(CXX)
 #---------------------------------------------------------------------------------
 endif
-#---------------------------------------------------------------------------------
 
 export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
 			$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
@@ -131,7 +142,7 @@ export INCLUDE	:=	$(foreach dir,$(INCLUDES),-I$(CURDIR)/$(dir)) \
 export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
 .PHONY: $(BUILD) clean all
- 
+
 #---------------------------------------------------------------------------------
 all: $(BUILD)
 
@@ -140,12 +151,12 @@ $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
 	@make --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
- 
+
 #---------------------------------------------------------------------------------
 clean:
 	@echo clean ...
-	@rm -fr $(BUILD) $(TARGET).3dhb $(TARGET).elf $(TARGET).3ds $(TARGET).3dsx $(TARGET).cia
- 
+	@rm -fr $(BUILD) $(TARGET).3dhb $(TARGET).elf $(TARGET).3ds $(TARGET).3dsx $(TARGET).cia $(TARGET).smdh $(TARGET)_stripped.elf $(TARGET).map
+
 
 cia:
 	@make $(MAKEFLAGS) OUTPUT_FORMAT=cia
@@ -155,12 +166,12 @@ cia:
 
 3dsx:
 	@make $(MAKEFLAGS) OUTPUT_FORMAT=3dsx
- 
+
 #---------------------------------------------------------------------------------
 else # make invoked from "build" directory
- 
+
 DEPENDS	:=	$(OFILES:.o=.d)
- 
+
 #---------------------------------------------------------------------------------
 # main targets
 #---------------------------------------------------------------------------------
@@ -175,13 +186,13 @@ $(OUTPUT).elf	:	$(OFILES)
 $(OUTPUT).cia: $(OUTPUT).elf
 	@cp $(OUTPUT).elf $(TARGET)_stripped.elf
 	@$(PREFIX)strip $(TARGET)_stripped.elf
-	makerom -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/resources/build_cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon $(TOPDIR)/resources/icon.icn -banner $(TOPDIR)/resources/banner.bnr
+	$(MAKEROM) -f cia -o $(OUTPUT).cia -rsf $(TOPDIR)/resources/build_cia.rsf -target t -exefslogo -elf $(TARGET)_stripped.elf -icon $(TOPDIR)/resources/icon.icn -banner $(TOPDIR)/resources/banner.bnr
 	@echo "built ... $(notdir $@)"
 
 $(OUTPUT).3ds: $(OUTPUT).elf $(TOPDIR)/resources/gw_workaround.rsf $(TOPDIR)/resources/banner.bnr $(TOPDIR)/resources/icon.icn
 	@cp $(OUTPUT).elf $(TARGET)_stripped.elf
 	@$(PREFIX)strip $(TARGET)_stripped.elf
-	makerom -f cci -o $(OUTPUT).3ds -rsf $(TOPDIR)/resources/gw_workaround.rsf -target d -exefslogo -elf $(TARGET)_stripped.elf -icon $(TOPDIR)/resources/icon.icn -banner $(TOPDIR)/resources/banner.bnr
+	$(MAKEROM) -f cci -o $(OUTPUT).3ds -rsf $(TOPDIR)/resources/gw_workaround.rsf -target d -exefslogo -elf $(TARGET)_stripped.elf -icon $(TOPDIR)/resources/icon.icn -banner $(TOPDIR)/resources/banner.bnr
 	@echo "built ... $(notdir $@)"
 
 # Always rebuild version.cpp, smdh file
@@ -192,21 +203,18 @@ version.o: .FORCE
 $(OUTPUT).smdh: .FORCE
 
 #---------------------------------------------------------------------------------
-# you need a rule like this for each extension you use as binary data 
+# you need a rule like this for each extension you use as binary data
 #---------------------------------------------------------------------------------
-%.bin.o	:	%.bin
-#---------------------------------------------------------------------------------
+%.bin.o	:
 	@echo $(notdir $<)
 	@$(bin2o)
 
-%.gb.o	:	%.gb
-#---------------------------------------------------------------------------------
+%.gb.o	:
 	@echo $(notdir $<)
 	@$(bin2o)
 
 -include $(DEPENDS)
- 
+
 #---------------------------------------------------------------------------------------
 endif
 #---------------------------------------------------------------------------------------
-

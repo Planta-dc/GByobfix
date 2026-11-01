@@ -9,6 +9,8 @@
 
 #include "inputhelper.h"
 #include "gameboy.h"
+#include "audio.h"
+#include "printconsole.h"
 #include "main.h"
 #include "console.h"
 #include "menu.h"
@@ -116,33 +118,24 @@ void system_getCamera(u8* memory, const u8* camRegisters)
 }
 
 void system_checkPolls() {
-    APP_STATUS status;
+    /* The current SDK's way of dealing with the sleep and home button
+     * requests: one call at the top of every frame. The old code asked
+     * the service for its status and dealt with the answers by hand, and
+     * that interface is not in the SDK any more. */
+    aptMainLoop();
 
-	while((status=aptGetStatus()) != APP_RUNNING) {
+    if (aptShouldClose()) {
+        system_cleanup();
+        exit(0);
+    }
 
-        if(status == APP_SUSPENDING)
-        {
-            aptReturnToMenu();
-        }
-        else if(status == APP_PREPARE_SLEEPMODE)
-        {
-			aptSignalReadyForSleep();
-            aptWaitStatusEvent();
-        }
-        else if (status == APP_SLEEPMODE) {
-
-        }
-        else if (status == APP_EXITING) {
-            system_cleanup();
-            exit(0);
-        }
-
+    {
         gspWaitForVBlank();
     }
 
     gfxFlushBuffers();
-    gfxMySwapBuffers();
-    consoleCheckFramebuffers();
+    gfxSwapBuffers();
+    consoleAfterSwap();
 }
 
 void system_waitForVBlank() {
@@ -153,7 +146,8 @@ void system_cleanup() {
     mgr_save();
     mgr_exit();
 
-    CSND_shutdown();
+    csndExit();
+    audio_exit();
 
     fsExit();
     gfxExit();

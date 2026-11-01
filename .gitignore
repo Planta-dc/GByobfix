@@ -13,4 +13,11 @@ gameyob.nds
 gameyob
 gameyob.ini
 LOG
-.vscode
+.vscodeartifacts/
+tools/makerom/
+tools/host/check_render
+tools/host/check_blit
+tools/host/check_timing
+tools/host/check_audio
+tools/host/debug_render
+tools/host/bench_render
