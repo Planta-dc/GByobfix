@@ -3,6 +3,8 @@
 #include <3ds.h>
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
+#include <3ds/services/gspgpu.h>
 #include <sys/iosupport.h>
 #include "default_font_bin.h"
 #include "3dsgfx.h"
@@ -31,25 +33,96 @@ static PrintConsole mainConsole;
 gfxScreen_t consoleScreen = GFX_BOTTOM;
 bool consoleRedraw = false;
 
+/*
+ * The colour the text is drawn in.
+ *
+ * The escape sequences that change it are handled here rather than by
+ * libctru's console, because libctru's console draws into a tiled
+ * framebuffer of its own and this one draws into the real one.
+ */
+static u32 textColor = RGB24(0xff, 0xff, 0xff);
+
+/* The sixteen colours, in the order the escape sequences number them. */
+static const u32 consoleColours[16] = {
+    RGB24(0x00, 0x00, 0x00), RGB24(0xaa, 0x00, 0x00),
+    RGB24(0x00, 0xaa, 0x00), RGB24(0xaa, 0x55, 0x00),
+    RGB24(0x00, 0x00, 0xaa), RGB24(0xaa, 0x00, 0xaa),
+    RGB24(0x00, 0xaa, 0xaa), RGB24(0xaa, 0xaa, 0xaa),
+    RGB24(0x55, 0x55, 0x55), RGB24(0xff, 0x55, 0x55),
+    RGB24(0x55, 0xff, 0x55), RGB24(0xff, 0xff, 0x55),
+    RGB24(0x55, 0x55, 0xff), RGB24(0xff, 0x55, 0xff),
+    RGB24(0x55, 0xff, 0xff), RGB24(0xff, 0xff, 0xff)
+};
+
 static void consoleCls(char);
+
+/*
+ * Scroll the text up by one row.
+ *
+ * The framebuffer is turned on its side, so a row of text on the screen
+ * is a column of the framebuffer, and the framebuffer's rows run across
+ * the screen. Scrolling up therefore means moving each column of the
+ * framebuffer along by one row of text, which is a move within each
+ * framebuffer row.
+ */
+static void consoleScroll(void) {
+    u8* fb = (u8*)activeConsole->frameBuffer;
+    int rows = activeConsole->consoleWidth * CHAR_WIDTH;
+    int stride = GFX_FB_STRIDE * 3;
+
+    for (int x = 0; x < rows; x++) {
+        u8* row = fb + x * stride;
+        memmove(row + CHAR_HEIGHT * 3, row, stride - CHAR_HEIGHT * 3);
+        memset(row, 0, CHAR_HEIGHT * 3);
+    }
+}
+
+/*
+ * Take the colour out of an escape sequence.
+ *
+ * The numbers are the colours: 30 to 37 are the eight dark ones, 90 to 97
+ * are the same eight in the bright version, and 0 or 39 puts it back to
+ * white. Anything else is ignored.
+ */
+static void consoleSetColour(const char* seq) {
+    int param = 0;
+    bool haveNumber = false;
+
+    for (const char* p = seq; *p && *p != 'm'; p++) {
+        if (*p >= '0' && *p <= '9') {
+            param = param * 10 + (*p - '0');
+            haveNumber = true;
+        }
+        else if (*p != '[' && *p != ';') {
+            return;
+        }
+    }
+
+    if (!haveNumber)
+        return;
+
+    int index;
+    if (param >= 30 && param <= 37)
+        index = param - 30;
+    else if (param >= 90 && param <= 97)
+        index = param - 90 + 8;
+    else if (param == 0 || param == 39)
+        index = 15;    /* back to white */
+    else
+        return;
+
+    textColor = consoleColours[index];
+}
 
 static void newRow() {
     activeConsole->cursorY++;
 
     if (activeConsole->cursorY >= activeConsole->consoleHeight) {
-        consoleCls('2');
-        /*
-        activeConsole->cursorY--;
-
-        for (int j=activeConsole->consoleHeight-2; j>=0; j--) {
-            for (int y=0; y<CHAR_HEIGHT; y++) {
-                for (int x=0; x<activeConsole->consoleWidth*CHAR_WIDTH; x++) {
-                    drawPixel((u8*)activeConsole->frameBuffer, x, j*CHAR_HEIGHT+y,
-                            getPixel((u8*)activeConsole->frameBuffer, x, (j+1)*CHAR_HEIGHT+y));
-                }
-            }
-        }
-        */
+        /* The text has run off the bottom, so it moves up a row. It used
+         * to clear the screen instead, which threw away everything that
+         * was already on it. */
+        consoleScroll();
+        activeConsole->cursorY = activeConsole->consoleHeight - 1;
     }
 }
 
@@ -61,11 +134,11 @@ void consoleDrawChar(char c) {
         for (int cx=0; cx<CHAR_WIDTH; cx+=2) {
             u8 byte = default_font_bin[c*CHAR_WIDTH*CHAR_HEIGHT/2 + cy*4 + cx/2];
             if (byte&0xf)
-                drawPixel((u8*)activeConsole->frameBuffer, x+cx, y+cy, TEXT_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer, x+cx, y+cy, textColor);
             else
                 drawPixel((u8*)activeConsole->frameBuffer,  x+cx, y+cy, BG_COLOR);
             if (byte>>4)
-                drawPixel((u8*)activeConsole->frameBuffer,  x+cx+1, y+cy, TEXT_COLOR);
+                drawPixel((u8*)activeConsole->frameBuffer,  x+cx+1, y+cy, textColor);
             else
                 drawPixel((u8*)activeConsole->frameBuffer,  x+cx+1, y+cy, BG_COLOR);
         }
@@ -162,15 +235,17 @@ static void consoleCls(char mode) {
 		}
 	case '2':
 		{
-			activeConsole->cursorY  = 0;
-			activeConsole->cursorX  = 0;
+		/* The console covers the whole screen, so clearing it is clearing
+		 * the framebuffer. Printing a space for every character would do
+		 * the same job with eight thousand times as many writes. */
+		u8* fb = (u8*)activeConsole->frameBuffer;
+		size_t size = (size_t)activeConsole->consoleWidth * CHAR_WIDTH *
+		              GFX_FB_STRIDE * 3;
+		memset(fb, 0, size);
 
-			while(i++ < activeConsole->consoleHeight * activeConsole->consoleWidth)
-				consolePrintChar(' ');
-
-			activeConsole->cursorY  = 0;
-			activeConsole->cursorX  = 0;
-			break;
+		activeConsole->cursorY  = 0;
+		activeConsole->cursorX  = 0;
+		break;
 		}
 	}
 }
@@ -253,7 +328,6 @@ static ssize_t con_write(struct _reent *r, void *fd, const char *ptr, size_t len
 
 	uint i, count = 0;
 	char *tmp = (char*)ptr;
-	int intensity = 0;
 
 	if(!tmp || len<=0) return -1;
 
@@ -340,26 +414,12 @@ static ssize_t con_write(struct _reent *r, void *fd, const char *ptr, size_t len
 						// Color scan codes
 						/////////////////////////////////////////
 					case 'm':
-						siscanf(escapeseq,"[%d;%dm", &parameter, &intensity);
-
-						//only handle 30-37,39 and intensity for the color changes
-						parameter -= 30;
-
-						//39 is the reset code
-						if(parameter == 9){
-							parameter = 15;
-						}
-						else if(parameter > 8){
-							parameter -= 2;
-						}
-						else if(intensity){
-							parameter += 8;
-						}
-                        /*
-						if(parameter < 16 && parameter >= 0){
-							activeConsole->fontCurPal = parameter << 12;
-						}
-                        */
+						/* The colour is worked out from the number in the
+						 * sequence. The old code read it with a scanf that
+						 * wanted two numbers and left one of them unset when
+						 * there was only one, and then put the colour into a
+						 * field libctru's console does not have. */
+						consoleSetColour(escapeseq);
 
 						escaping = false;
 						break;
@@ -392,6 +452,10 @@ static const devoptab_t dotab_stdout = {
 	NULL,
 	NULL
 };
+
+PrintConsole* consoleCurrent(void) {
+    return activeConsole;
+}
 
 void consoleInitBottom() {
     activeConsole = &mainConsole;
@@ -454,6 +518,11 @@ void consoleAfterSwap() {
         int size = (activeConsole->consoleWidth*CHAR_WIDTH *
                 activeConsole->consoleHeight*CHAR_HEIGHT) * 3;
         memcpy(framebuffer, lastFramebuffer, size);
+
+        /* The copy is in the processor's cache, and the display controller
+         * reads the framebuffer over the bus, so it has to be written out
+         * or the text appears a frame late. */
+        GSPGPU_FlushDataCache(framebuffer, size);
     }
 
     lastFramebuffer = framebuffer;

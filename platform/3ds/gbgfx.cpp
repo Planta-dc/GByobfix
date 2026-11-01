@@ -201,6 +201,10 @@ void initGFX()
      * this only happens when the emulator is started. */
     memset(bgIndexLow, PAL_NEVER_DRAWN, sizeof(bgIndexLow));
 
+    /* And so does the picture, or the screen would come up white before
+     * the first frame has been drawn. */
+    memset(gameFrame, PAL_NEVER_DRAWN, sizeof(gameFrame));
+
     rebuildPaletteTable();
 }
 
