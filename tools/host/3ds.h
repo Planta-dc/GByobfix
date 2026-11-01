@@ -55,6 +55,10 @@ typedef enum {
     GFX_RIGHT = 1,
 } gfx3dSide_t;
 
+/* Colours. The real SDK packs 24 bit colours into 16 bit ones, and the
+ * port's framebuffer is 16 bit. */
+#define RGB8_to_565(r,g,b)  (((b)>>3)&0x1f)|((((g)>>2)&0x3f)<<5)|((((r)>>3)&0x1f)<<11)
+
 /* The sizes the real SDK reports. The framebuffer is 240 pixels wide and
  * 400 or 320 tall, which is the picture on its side. */
 #define GSP_SCREEN_WIDTH 240
@@ -68,6 +72,7 @@ u8* hostGetFramebuffer(gfxScreen_t screen, int buffer);
 int hostGetBufferIndex(gfxScreen_t screen);
 
 void gfxInitDefault(void);
+void gfxSetWide(bool enable);
 u8* gfxGetFramebuffer(gfxScreen_t screen, gfx3dSide_t side, u16* width, u16* height);
 void gfxSwapBuffers(void);
 void gfxFlushBuffers(void);

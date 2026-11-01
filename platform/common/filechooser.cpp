@@ -3,6 +3,10 @@
 #include <string>
 #include <string.h>
 #include "filechooser.h"
+#ifdef _3DS
+#include "printconsole.h"
+#include "ui3ds.h"
+#endif
 #include "inputhelper.h"
 #include "console.h"
 #include "io.h"
@@ -14,9 +18,6 @@
 #include "printconsole.h"
 #endif
 
-#define FLAG_DIRECTORY  1
-#define FLAG_SUSPENDED  2
-#define FLAG_ROM        4
 
 using namespace std;
 
@@ -220,7 +221,10 @@ template <class Data, class Metadata> void quickSort(std::vector<Data>& data, st
  */
 char* startFileChooser(const char* extensions[], bool romExtensions, bool canQuit) {
 #ifdef _3DS
-    filesPerPage = TOP_SCREEN_HEIGHT / CHAR_HEIGHT;
+    /* The 3DS draws the list as panels of a fixed height, and the page
+     * size has to be the same as the number of rows it shows, or the list
+     * would scroll by more than a screen at a time. */
+    filesPerPage = 7;
 #else
     filesPerPage = 24;
 #endif
@@ -233,6 +237,10 @@ char* startFileChooser(const char* extensions[], bool romExtensions, bool canQui
     setPrintConsole(menuConsole);
     fileChooserOn = true;
     updateScreens(true); // Screen may need to be enabled
+#ifdef _3DS
+    /* The browser is drawn as panels, so the console is put away. */
+    consoleSetSuspended(true);
+#endif
 
     /*
 #ifdef _3DS
@@ -355,8 +363,12 @@ char* startFileChooser(const char* extensions[], bool romExtensions, bool canQui
         updateScrollDown();
         bool readDirectory = false;
         while (!readDirectory) {
-            int screenLen = consoleGetWidth();
             // Draw the screen
+#ifdef _3DS
+            uiDrawFileList(cwd, filenames, flags, numFiles,
+                           fileSelection, scrollY, canQuit);
+#else
+            int screenLen = consoleGetWidth();
             clearConsole();
             strncpy(buffer, cwd, screenLen);
             buffer[screenLen] = '\0';
@@ -403,6 +415,7 @@ char* startFileChooser(const char* extensions[], bool romExtensions, bool canQui
                 iprintfColored(CONSOLE_COLOR_WHITE, "                Press Y to exit");
             }
 
+#endif
             // Wait for input
             while (true) {
                 system_checkPolls();
@@ -472,6 +485,9 @@ lowerDirectory:
         }
     }
 end:
+#ifdef _3DS
+    consoleSetSuspended(false);
+#endif
     clearConsole();
 #ifdef DS
     consoleSelectedRow = -1;

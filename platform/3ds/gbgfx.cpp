@@ -96,7 +96,7 @@ u8 gameFrame[GB_WIDTH * GB_HEIGHT];
 
 /* Index -> colour. Packed the way the framebuffer wants it: B, G, R.
  * The last entry is black: see the header. */
-u32 palColour[65];
+u16 palColour[65];
 
 /* The index that means "nothing has been drawn here yet". It is black,
  * and it is transparent like every other colour zero. */
@@ -692,8 +692,12 @@ static void refreshModifiedPalettes(void) {
  * blit writes the low byte of the colour first. So the colour is kept as
  * red in the top byte, green in the middle and blue at the bottom, and the
  * three bytes can be copied out without being shuffled. */
-static inline u32 packColour(u32 rgb24) {
-    return rgb24;
+static inline u16 packColour(u32 rgb24) {
+    int red   = (rgb24 >> 16) & 0xFF;
+    int green = (rgb24 >> 8) & 0xFF;
+    int blue  = rgb24 & 0xFF;
+
+    return rgb565(red, green, blue);
 }
 
 /*

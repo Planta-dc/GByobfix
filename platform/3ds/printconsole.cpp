@@ -11,8 +11,8 @@
 #include "printconsole.h"
 #include "menu.h"
 
-const u32 TEXT_COLOR = RGB24(0xff, 0xff, 0xff);
-const u32 BG_COLOR = RGB24(0x00, 0x00, 0x00);
+const u16 TEXT_COLOR = rgb565(0xff, 0xff, 0xff);
+const u16 BG_COLOR = rgb565(0x00, 0x00, 0x00);
 
 /*
  * The console this port draws with.
@@ -27,6 +27,13 @@ const u32 BG_COLOR = RGB24(0x00, 0x00, 0x00);
  */
 static PrintConsole* activeConsole = NULL;
 
+/* Whether the console has been put away for the graphical interface. */
+static bool consoleSuspended = false;
+
+void consoleSetSuspended(bool suspended) {
+    consoleSuspended = suspended;
+}
+
 static PrintConsole mainConsole;
 
 /* The screen the console is on, and whether it has to be redrawn. */
@@ -40,18 +47,18 @@ bool consoleRedraw = false;
  * libctru's console, because libctru's console draws into a tiled
  * framebuffer of its own and this one draws into the real one.
  */
-static u32 textColor = RGB24(0xff, 0xff, 0xff);
+static u16 textColor = rgb565(0xff, 0xff, 0xff);
 
 /* The sixteen colours, in the order the escape sequences number them. */
-static const u32 consoleColours[16] = {
-    RGB24(0x00, 0x00, 0x00), RGB24(0xaa, 0x00, 0x00),
-    RGB24(0x00, 0xaa, 0x00), RGB24(0xaa, 0x55, 0x00),
-    RGB24(0x00, 0x00, 0xaa), RGB24(0xaa, 0x00, 0xaa),
-    RGB24(0x00, 0xaa, 0xaa), RGB24(0xaa, 0xaa, 0xaa),
-    RGB24(0x55, 0x55, 0x55), RGB24(0xff, 0x55, 0x55),
-    RGB24(0x55, 0xff, 0x55), RGB24(0xff, 0xff, 0x55),
-    RGB24(0x55, 0x55, 0xff), RGB24(0xff, 0x55, 0xff),
-    RGB24(0x55, 0xff, 0xff), RGB24(0xff, 0xff, 0xff)
+static const u16 consoleColours[16] = {
+    rgb565(0x00, 0x00, 0x00), rgb565(0xaa, 0x00, 0x00),
+    rgb565(0x00, 0xaa, 0x00), rgb565(0xaa, 0x55, 0x00),
+    rgb565(0x00, 0x00, 0xaa), rgb565(0xaa, 0x00, 0xaa),
+    rgb565(0x00, 0xaa, 0xaa), rgb565(0xaa, 0xaa, 0xaa),
+    rgb565(0x55, 0x55, 0x55), rgb565(0xff, 0x55, 0x55),
+    rgb565(0x55, 0xff, 0x55), rgb565(0xff, 0xff, 0x55),
+    rgb565(0x55, 0x55, 0xff), rgb565(0xff, 0x55, 0xff),
+    rgb565(0x55, 0xff, 0xff), rgb565(0xff, 0xff, 0xff)
 };
 
 static void consoleCls(char);
@@ -68,12 +75,13 @@ static void consoleCls(char);
 static void consoleScroll(void) {
     u8* fb = (u8*)activeConsole->frameBuffer;
     int rows = activeConsole->consoleWidth * CHAR_WIDTH;
-    int stride = GFX_FB_STRIDE * 3;
+    int stride = GFX_FB_STRIDE * GFX_BYTES_PER_PIXEL;
 
     for (int x = 0; x < rows; x++) {
         u8* row = fb + x * stride;
-        memmove(row + CHAR_HEIGHT * 3, row, stride - CHAR_HEIGHT * 3);
-        memset(row, 0, CHAR_HEIGHT * 3);
+        memmove(row + CHAR_HEIGHT * GFX_BYTES_PER_PIXEL, row,
+                stride - CHAR_HEIGHT * GFX_BYTES_PER_PIXEL);
+        memset(row, 0, CHAR_HEIGHT * GFX_BYTES_PER_PIXEL);
     }
 }
 
@@ -240,7 +248,7 @@ static void consoleCls(char mode) {
 		 * the same job with eight thousand times as many writes. */
 		u8* fb = (u8*)activeConsole->frameBuffer;
 		size_t size = (size_t)activeConsole->consoleWidth * CHAR_WIDTH *
-		              GFX_FB_STRIDE * 3;
+		              GFX_FB_STRIDE * GFX_BYTES_PER_PIXEL;
 		memset(fb, 0, size);
 
 		activeConsole->cursorY  = 0;
@@ -330,6 +338,11 @@ static ssize_t con_write(struct _reent *r, void *fd, const char *ptr, size_t len
 	char *tmp = (char*)ptr;
 
 	if(!tmp || len<=0) return -1;
+
+	/* While the graphical interface is up the console says nothing, but
+	 * it still swallows the text, so that whatever prints does not end
+	 * up in the middle of the interface later. */
+	if (consoleSuspended) return len;
 
 	i = 0;
 
@@ -514,9 +527,12 @@ void consoleAfterSwap() {
     u16 width, height;
     u8* framebuffer = gfxGetFramebuffer(consoleScreen, GFX_LEFT, &width, &height);
 
+    /* The copy is made even while the console is suspended: the graphical
+     * interface is drawn into the same framebuffer, and without the copy
+     * the screen would go back to what it held two frames ago. */
     if (framebuffer != lastFramebuffer && lastFramebuffer) {
-        int size = (activeConsole->consoleWidth*CHAR_WIDTH *
-                activeConsole->consoleHeight*CHAR_HEIGHT) * 3;
+        int size = activeConsole->consoleWidth * CHAR_WIDTH *
+                   GFX_FB_STRIDE * GFX_BYTES_PER_PIXEL;
         memcpy(framebuffer, lastFramebuffer, size);
 
         /* The copy is in the processor's cache, and the display controller

@@ -23,17 +23,10 @@
 /* The block the blit works in. */
 #define BLIT_TILE 8
 
-u32 getPixel(u8* framebuffer, int x, int y) {
-    u8* ptr = framebuffer + (x*GFX_FB_STRIDE + (GFX_FB_STRIDE - 1 - y))*3;
-    return *ptr | *(ptr+1)<<8 | *(ptr+2)<<16;
-}
-
 void drawPixel(u8* framebuffer, int x, int y, u32 color) {
-    u8* ptr = framebuffer + (x*GFX_FB_STRIDE + (GFX_FB_STRIDE - 1 - y))*3;
+    u16* ptr = (u16*)framebuffer + (x*GFX_FB_STRIDE + (GFX_FB_STRIDE - 1 - y));
 
-    ptr[0] = color & 0xFF;
-    ptr[1] = (color >> 8) & 0xFF;
-    ptr[2] = (color >> 16) & 0xFF;
+    *ptr = (u16)color;
 }
 
 u8* gfxGetGameFramebuffer(void) {
@@ -98,7 +91,7 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
 
                     /* The framebuffer runs bottom up, so the pointer moves
                      * forward as the row number falls. */
-                    u8* p = dest + (dx * GFX_FB_STRIDE + (GFX_FB_STRIDE - 1 - yTo)) * 3;
+                    u16* p = (u16*)dest + (dx * GFX_FB_STRIDE + (GFX_FB_STRIDE - 1 - yTo));
 
                     int r = rows - 1;
                     while (r > 0 && rowStart[r] > yTo)
@@ -108,10 +101,7 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
                         while (r > 0 && rowStart[r] > y)
                             r--;
 
-                        u32 colour = palColour[tile[r][c]];
-                        *p++ = colour & 0xFF;
-                        *p++ = (colour >> 8) & 0xFF;
-                        *p++ = (colour >> 16) & 0xFF;
+                        *p++ = palColour[tile[r][c]];
                     }
                 }
             }

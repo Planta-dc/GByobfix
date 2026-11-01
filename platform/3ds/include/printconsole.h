@@ -34,5 +34,16 @@ PrintConsole* consoleCurrent(void);
  */
 void consoleAfterSwap();
 
+/*
+ * Put the text console away.
+ *
+ * While the graphical interface is up, the console must not draw: the two
+ * would fight over the same screen. The console's text is also not copied
+ * across the framebuffer swap, so that the interface, which is drawn
+ * straight into the framebuffer, is not wiped out by the console's old
+ * text.
+ */
+void consoleSetSuspended(bool suspended);
+
 const int CHAR_WIDTH = 8;
 const int CHAR_HEIGHT = 8;
