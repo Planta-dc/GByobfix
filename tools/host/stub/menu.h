@@ -14,3 +14,6 @@ extern int gameScreen;
 /* Fast forward: the emulator runs as many frames as it can. */
 extern bool fastForwardMode;
 extern bool fastForwardKey;
+
+/* Whether the sound is switched off from the menu. The APU asks. */
+extern bool soundDisabled;

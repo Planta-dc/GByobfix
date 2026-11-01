@@ -7,8 +7,25 @@
 
 #include "gameboy.h"
 #include "menu.h"
+#include "console.h"
+
+#include <stdarg.h>
 
 Gameboy* gameboy = NULL;
 int gameScreen = 0;
 bool fastForwardMode = false;
 bool fastForwardKey = false;
+bool soundDisabled = false;
+
+/* The APU's console output. It is noise for a test, so it goes nowhere
+ * except a counter that says it happened. */
+int printLogCount = 0;
+
+void printLog(const char* format, ...)
+{
+    (void)format;
+    printLogCount++;
+}
+
+int dbgChanOn[4]; int dbgChanVol[4]; int dbgTo1[4]; int dbgTo2[4];
+int dbgSO1; int dbgSO2; int dbgPol0; int dbgFreq0; int dbgCount;

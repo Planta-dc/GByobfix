@@ -91,17 +91,65 @@ Result csndInit(void)
     return 0;
 }
 
+/* What the sound service was told to play, so that a test can look at
+ * the samples the transport is actually handing over. The real service
+ * keeps this to itself; here it is kept in the open. */
+void* hostCsndData[32];
+void* hostCsndLoop[32];
+u32 hostCsndSize[32];
+u32 hostCsndFlags[32];
+u32 hostCsndRate[32];
+float hostCsndVol[32];
+float hostCsndPan[32];
+int hostCsndCalls;
+
+/* The channels that were asked for, in the order they were asked for. A
+ * test can find the ear it wants without having to know which channel
+ * number the port chose. */
+int hostCsndChn[8];
+int hostCsndChnCount;
+
+/* The volume that was set on each channel, and how many times the queue
+ * of commands was executed. The commands only reach the service when the
+ * queue is executed, so a test can tell the difference between a volume
+ * that was asked for and a volume that was applied. */
+u32 hostCsndVolSet[32];
+int hostCsndVolSetCount;
+int hostCsndExecCount;
+
 Result csndPlaySound(int chn, u32 flags, u32 sampleRate, float vol, float pan,
                      void* data0, void* data1, u32 size)
 {
-    (void)chn; (void)flags; (void)sampleRate; (void)vol; (void)pan;
-    (void)data0; (void)data1; (void)size;
+    if (chn >= 0 && chn < 32) {
+        hostCsndData[chn] = data0;
+        hostCsndLoop[chn] = data1;
+        hostCsndSize[chn] = size;
+        hostCsndFlags[chn] = flags;
+        hostCsndRate[chn] = sampleRate;
+        hostCsndVol[chn] = vol;
+        hostCsndPan[chn] = pan;
+    }
+    if (hostCsndChnCount < 8)
+        hostCsndChn[hostCsndChnCount] = chn;
+    hostCsndChnCount++;
+    hostCsndCalls++;
     return 0;
 }
 
 void CSND_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes)
 {
-    (void)channel; (void)chnVolumes; (void)capVolumes;
+    (void)capVolumes;
+    if (channel < 32) {
+        hostCsndVolSet[channel] = chnVolumes;
+        hostCsndVolSetCount++;
+    }
+}
+
+Result csndExecCmds(bool waitDone)
+{
+    (void)waitDone;
+    hostCsndExecCount++;
+    return 0;
 }
 
 void CSND_SetPlayState(u32 channel, u32 value)

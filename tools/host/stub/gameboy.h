@@ -14,6 +14,10 @@
 #define GB  0
 #define CGB 1
 
+/* The Game Boy's clock, in cycles a second. The real gameboy.h defines
+ * this, and the APU needs it. */
+#define clockSpeed 4194304
+
 class Gameboy;
 
 extern Gameboy* gameboy;
@@ -36,4 +40,32 @@ public:
         memset(bgPaletteData, 0, sizeof(bgPaletteData));
         memset(sprPaletteData, 0, sizeof(sprPaletteData));
     }
+
+    /* The APU reads and writes the sound registers through these. The
+     * real readIO masks a few of them back to ones, the way the hardware
+     * does; the ones that matter to the sound test are the ones the APU
+     * reads back after it has written them. */
+    u8 readIO(u8 ioReg)
+    {
+        switch (ioReg)
+        {
+            case 0x10: return ioRam[ioReg] | 0x80;
+            case 0x11: return ioRam[ioReg] | 0x3F;
+            case 0x13: return 0xFF;
+            case 0x14: return ioRam[ioReg] | 0xBF;
+            case 0x16: return ioRam[ioReg] | 0x3F;
+            case 0x18: return 0xFF;
+            case 0x19: return ioRam[ioReg] | 0xBF;
+            case 0x1C: return ioRam[ioReg] | 0x3F;
+            case 0x1E: return 0xFF;
+            case 0x1F: return ioRam[ioReg] | 0xBF;
+            case 0x21: return 0xFF;
+            case 0x22: return ioRam[ioReg] | 0x3F;
+            case 0x24: return ioRam[ioReg] | 0x7F;
+            default:   return ioRam[ioReg];
+        }
+    }
+
+    inline void setSoundChannel(int which) { ioRam[0x26] |= which; }
+    inline void clearSoundChannel(int which) { ioRam[0x26] &= ~which; }
 };
