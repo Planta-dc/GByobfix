@@ -7,7 +7,8 @@
 # package manager and a keyring on a machine that is thrown away after
 # every run, and it means the build is the same build on every machine.
 #
-#     bash docker/ci-build.sh
+#     bash docker/ci-build.sh            build everything
+#     bash docker/ci-build.sh 3dsx       build only the .3dsx
 #
 # It builds the three things the port can be shipped as - the .3dsx that
 # the Homebrew launcher runs, the .cia that a title manager installs, and
@@ -22,48 +23,34 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 IMAGE="${DEVKITPRO_IMAGE:-devkitpro/devkitarm:latest}"
+TASK="${1:-all}"
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "ci-build: docker is needed to run the build in devkitPro's image."
     exit 2
 fi
 
-echo "Building in $IMAGE"
+echo "Building '$TASK' in $IMAGE"
 
 docker run --rm \
     -v "$ROOT:/src" \
     -w /src \
     "$IMAGE" \
-    bash -c '
-        set -euo pipefail
+    bash docker/in-image.sh "$TASK"
 
-        export DEVKITPRO=/opt/devkitpro
-        export DEVKITARM=/opt/devkitpro/devkitARM
+# The container runs as root, so everything it wrote into the checkout
+# belongs to root. Give it back, or the next step cannot write next to it.
+if [ "$(id -u)" = "0" ]; then
+    chown -R "$(id -u):$(id -g)" "$ROOT" 2>/dev/null || true
+fi
 
-        # makerom is not in the image and not in the package manager.
-        if [ ! -x tools/makerom/bin/makerom ]; then
-            echo "Building makerom"
-            apt-get update
-            apt-get install -y --no-install-recommends cmake
-            rm -rf tools/makerom
-            git clone --depth 1 https://github.com/3DSGuy/Project_CTR.git tools/makerom
-            make -C tools/makerom deps
-            make -C tools/makerom
-        fi
-
-        # Does the port still fit the SDK? This is the check that catches
-        # an SDK that has moved on.
-        tools/host/check-libctru.sh "$DEVKITPRO/libctru/include"
-
-        echo "Building the .3dsx"
-        make -C platform/3ds -j"$(nproc)" OUTPUT_FORMAT=3dsx
-
-        echo "Building the .cia"
-        make -C platform/3ds cia
-
-        echo "Building the .3ds"
-        make -C platform/3ds 3ds
-    '
-
-ls -l "$ROOT/platform/3ds"/gameyob.3dsx "$ROOT/platform/3ds"/gameyob.cia \
-      "$ROOT/platform/3ds"/gameyob.3ds
+case "$TASK" in
+    all|cia|3ds)
+        ls -l "$ROOT/platform/3ds"/gameyob.cia "$ROOT/platform/3ds"/gameyob.3ds
+        ;;
+esac
+case "$TASK" in
+    all|3dsx)
+        ls -l "$ROOT/platform/3ds"/gameyob.3dsx
+        ;;
+esac
