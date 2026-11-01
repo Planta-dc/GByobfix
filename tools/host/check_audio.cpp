@@ -85,8 +85,20 @@ int main(void)
         fail("the emulator fell behind", (long long)stats.underruns, 0);
     if (stats.drops != 0)
         fail("samples were thrown away", (long long)stats.drops, 0);
-    if (stats.corrections != 0)
-        fail("the clocks were corrected", (long long)stats.corrections, 0);
+
+    /* There are corrections even though the console's clock is perfect,
+     * and there have to be. The sound service plays at a rate it works
+     * out from a whole number of ticks, so it cannot play at exactly the
+     * rate the emulator produces samples at: it plays about fourteen
+     * frames a second faster, and the transport has to repeat the odd
+     * sample to keep the distance. What it must not do is correct so
+     * often that it is dropping or repeating everything. */
+    if (stats.corrections > 3600)
+        fail("the clocks were corrected too often", (long long)stats.corrections,
+             3600);
+    if (stats.corrections < 100)
+        fail("the difference between the two rates was not corrected",
+             (long long)stats.corrections, 100);
 
     /* The emulator must be about the margin ahead of the service. */
     if (stats.fillFrames < 1000 || stats.fillFrames > 1100)
@@ -130,6 +142,45 @@ int main(void)
         fail("the distance to the service is wrong", stats.fillFrames, 1024);
 
     audio_exit();
+
+    /* A long run. The transport works out where the service has got to
+     * from the console's clock, using the rate the service really plays
+     * at. If it used the rate it asked for instead, the two would drift
+     * apart at about fourteen frames a second, and after about seven
+     * minutes the service would be reading past the samples the emulator
+     * had written and the sound would fall apart. A minute is not long
+     * enough to see that, so this runs for ten. */
+    {
+        hostTick = 0;
+        hostTickPerRead = 0;
+
+        if (!audio_init()) {
+            printf("FAIL: the sound transport would not start for the long run.\n");
+            return 1;
+        }
+
+        for (int frame = 0; frame < 36000; frame++) {
+            audio_submit(left, right, FRAME_SAMPLES);
+            hostTick += FRAME_TICKS;
+        }
+
+        audio_get_stats(&stats);
+
+        if (stats.drops != 0)
+            fail("samples were thrown away over ten minutes",
+                 (long long)stats.drops, 0);
+        if (stats.underruns != 0)
+            fail("the emulator fell behind over ten minutes",
+                 (long long)stats.underruns, 0);
+        if (stats.fillFrames < 1000 || stats.fillFrames > 1100)
+            fail("the distance to the service drifted over ten minutes",
+                 stats.fillFrames, 1024);
+
+        printf("Ten minutes of frames: %llu corrections, %llu drops, %d frames ahead.\n",
+               stats.corrections, stats.drops, stats.fillFrames);
+
+        audio_exit();
+    }
 
     if (failures) {
         printf("FAIL: %d problems.\n", failures);

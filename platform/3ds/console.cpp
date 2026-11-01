@@ -20,7 +20,7 @@ void clearConsole() {
 }
 
 PrintConsole* getDefaultConsole() {
-    return NULL;
+    return consoleCurrent();
 }
 
 void updateScreens(bool waitToFinish) {
@@ -39,10 +39,19 @@ void consoleSetLineColor(int line, int color) {
 
 void iprintfColored(int palette, const char* format, ...) {
     va_list args;
-    va_start(args, format);
 
+    /* The console is told to change colour with an escape sequence. The
+     * palette is numbered the way the sequences number colours: the first
+     * eight are the dark ones and the second eight are the same eight in
+     * the bright version. */
+    printf("\x1b[%dm", 30 + (palette & 7) + ((palette & 8) ? 60 : 0));
+
+    va_start(args, format);
     vprintf(format, args);
     va_end(args);
+
+    /* And back to the colour everything else is. */
+    printf("\x1b[0m");
 }
 void printLog(const char* format, ...) {
     if (consoleDebugOutput) {
@@ -87,5 +96,5 @@ void setPrintConsole(PrintConsole* console) {
 
 }
 PrintConsole* getPrintConsole() {
-    return NULL;
+    return consoleCurrent();
 }

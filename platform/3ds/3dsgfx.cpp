@@ -126,6 +126,11 @@ void gfxPresentGameFrame(void) {
     int scaledWidth = GB_WIDTH * BLIT_SCALE_NUM / BLIT_SCALE_DEN;
     int scaledHeight = GB_HEIGHT * BLIT_SCALE_NUM / BLIT_SCALE_DEN;
 
+    /* The framebuffers are doubled, and each one holds the picture from
+     * two frames ago. The picture does not cover the whole screen, so
+     * without this the area around it would show the old picture. */
+    gfxClearScreenFrame();
+
     gfxBlitGameFrame(framebuffer, width, height, gameFrame,
                      (width - scaledWidth) / 2, (height - scaledHeight) / 2,
                      BLIT_SCALE_NUM, BLIT_SCALE_DEN);
@@ -137,5 +142,8 @@ void gfxPresentGameFrame(void) {
     GSPGPU_FlushDataCache(framebuffer,
                           gameScreen ? BOTTOM_FRAMEBUFFER_SIZE : TOP_FRAMEBUFFER_SIZE);
 
-    gfxSwapBuffers();
+    /* The screen is not swapped here. The swap is done once per frame,
+     * where the console is as well, because a second swap in the same
+     * frame puts the other framebuffer on the screen: the one the picture
+     * was not drawn into. */
 }

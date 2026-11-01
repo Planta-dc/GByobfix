@@ -19,6 +19,10 @@ void consoleInitBottom();
 void consoleSetScreen(gfxScreen_t screen);
 void consoleCheckFramebuffers();
 
+/* The console the port draws with. There is only one: the menu and the
+ * file chooser both print into it. */
+PrintConsole* consoleCurrent(void);
+
 /*
  * Called after the screens have been swapped.
  *

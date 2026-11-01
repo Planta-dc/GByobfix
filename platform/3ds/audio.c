@@ -19,6 +19,30 @@
  * channels. */
 #define AUDIO_EARS 2
 
+/* Where each ear's channel is played.
+ *
+ * The service is given a volume and a pan, and the pan is what decides
+ * which speaker a channel comes out of: -1 is all the way to the left
+ * and +1 all the way to the right.
+ *
+ * A pan of 0, which is the middle, is not the same as "straight
+ * ahead". The service turns a volume and a pan into a pair of volumes,
+ * one for each speaker, so a pan of 0 gives each speaker half of the
+ * volume. A channel played with a pan of 0 comes out of both ears at
+ * half the volume, and with a channel for each ear that means both ears
+ * hear a mixture of the two at half the volume: mono, and quiet.
+ */
+#define AUDIO_PAN_LEFT (-1.0f)
+#define AUDIO_PAN_RIGHT (1.0f)
+
+/* The channels to try. The service hands out the channels an
+ * application may use, and a channel it has not handed out cannot be
+ * played on: csndPlaySound says so and does nothing. Rather than guess
+ * which ones are free, they are tried in turn until two of them work.
+ */
+#define AUDIO_CHANNEL_FIRST 0
+#define AUDIO_CHANNEL_LAST 16
+
 /* How much audio is kept in flight. At 49932 Hz, 8192 frames are 164 ms. */
 #define AUDIO_RING_FRAMES 8192
 
@@ -42,10 +66,34 @@
  * sample. */
 #define AUDIO_BUFFER_FRAMES (AUDIO_RING_FRAMES + 1)
 
+/* The rate the service will really play at.
+ *
+ * The service is told a rate and turns it into a timer, and the timer is
+ * a whole number of ticks, so the rate it plays at is not the rate that
+ * was asked for. Asking for 49932 Hz gives a timer of 1342, and
+ * 67027964 ticks a second divided by 1342 is 49946 Hz.
+ *
+ * The transport works out where the service has got to from the console's
+ * clock, so it has to use the rate the service really plays at. Using
+ * the rate that was asked for makes the two drift apart at about
+ * fourteen frames a second, which is nothing to begin with and then,
+ * after about seven minutes, the writer catches up with the samples the
+ * service has not played yet and starts throwing them away.
+ *
+ * The rate is kept as the fraction the hardware actually uses, so that
+ * there is no rounding error either.
+ */
+#define AUDIO_RATE_NUM CSND_TIMER(1)
+#define AUDIO_RATE_DEN CSND_TIMER(AUDIO_RATE)
+
 static s16* ring[AUDIO_EARS];
 static int channel[AUDIO_EARS];
 static bool running;
 static bool muted;
+
+/* The volume each ear's channel is played at, so that muting and
+ * unmuting can put back exactly what was there before. */
+static u32 earVolume[AUDIO_EARS];
 
 /* Frames the emulator has written into the ring. */
 static u64 written;
@@ -68,10 +116,9 @@ static unsigned long long statCorrections;
  *
  * The service is told to play at AUDIO_RATE, and the console's clock says
  * how long it has been playing, so the position follows from the two. The
- * service's own clock is not exactly the console's clock, and the two
- * rates are not exactly the rate that was asked for; the difference is
- * small, it does not accumulate, and the sample correction below takes it
- * out of the signal.
+ * service's own clock is not exactly the console's clock, and the rate it
+ * plays at is not exactly the rate that was asked for, so the rate it
+ * really plays at is used here. See AUDIO_RATE_NUM above.
  */
 static u64 readPosition(void)
 {
@@ -79,7 +126,8 @@ static u64 readPosition(void)
     u64 seconds = elapsed / SYSCLOCK_ARM11;
     u64 rest = elapsed % SYSCLOCK_ARM11;
 
-    return seconds * AUDIO_RATE + (rest * AUDIO_RATE) / SYSCLOCK_ARM11;
+    return seconds * AUDIO_RATE_NUM / AUDIO_RATE_DEN +
+           (rest * AUDIO_RATE_NUM) / (AUDIO_RATE_DEN * (u64)SYSCLOCK_ARM11);
 }
 
 bool audio_init(void)
@@ -97,22 +145,44 @@ bool audio_init(void)
             return false;
         }
         memset(ring[ear], 0, AUDIO_BUFFER_FRAMES * sizeof(s16));
-        channel[ear] = 8 + ear;
+        channel[ear] = -1;
     }
 
     /* The service plays the buffer from the start once and then loops from
      * the second sample onwards, so the ring is the loop and the sample in
-     * front of it is the one that is played first. */
-    for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        s16* data = ring[ear];
-        Result r = csndPlaySound(channel[ear],
+     * front of it is the one that is played first.
+     *
+     * Each ear gets its own channel, panned to its own side. The service
+     * is given a volume and a pan and works out a volume for each speaker
+     * from them, so the pan has to be all the way over for the ear to get
+     * the whole of the signal.
+     *
+     * The channels are tried in turn because the service decides which
+     * ones an application may use, and a channel it has not handed out
+     * cannot be played on. csndPlaySound says so and does nothing, so
+     * the first two that answer are the ones to use. */
+    int next = 0;
+    for (int chn = AUDIO_CHANNEL_FIRST; chn <= AUDIO_CHANNEL_LAST && next < AUDIO_EARS; chn++) {
+        int ear = next;
+        float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
+
+        Result r = csndPlaySound(chn,
                                   SOUND_REPEAT | SOUND_FORMAT_16BIT | SOUND_ENABLE,
-                                  AUDIO_RATE, 1.0f, 0.0f,
-                                  data, data + 1, AUDIO_BUFFER_FRAMES * sizeof(s16));
-        if (R_FAILED(r)) {
-            audio_exit();
-            return false;
-        }
+                                  AUDIO_RATE, 1.0f, pan,
+                                  ring[ear], ring[ear] + 1,
+                                  AUDIO_BUFFER_FRAMES * sizeof(s16));
+        if (R_FAILED(r))
+            continue;
+
+        channel[ear] = chn;
+        earVolume[ear] = CSND_VOL(1.0f, pan);
+        next++;
+    }
+
+    if (next < AUDIO_EARS) {
+        /* Not enough channels to play both ears. */
+        audio_exit();
+        return false;
     }
 
     playStart = svcGetSystemTick();
@@ -137,13 +207,29 @@ void audio_exit(void)
     if (!running && !ring[0])
         return;
 
+    bool started = false;
+
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
         if (ring[ear]) {
-            CSND_SetPlayState(channel[ear], 0);
+            if (channel[ear] >= 0) {
+                CSND_SetPlayState(channel[ear], 0);
+                started = true;
+            }
             linearFree(ring[ear]);
             ring[ear] = NULL;
         }
+        channel[ear] = -1;
     }
+
+    /* The commands above are only written into the service's queue.
+     * They are not sent until the queue is executed, and without this
+     * the service keeps playing the ring that has just been freed.
+     *
+     * This has to happen even when the transport never started properly,
+     * because a channel that was started and then not stopped goes on
+     * playing a buffer that is no longer there. */
+    if (started)
+        csndExecCmds(true);
 
     running = false;
 }
@@ -156,8 +242,15 @@ void audio_set_muted(bool newMuted)
     muted = newMuted;
 
     if (running) {
-        for (int ear = 0; ear < AUDIO_EARS; ear++)
-            CSND_SetVol(channel[ear], CSND_VOL(muted ? 0.0f : 1.0f, 0.0f), 0);
+        for (int ear = 0; ear < AUDIO_EARS; ear++) {
+            if (channel[ear] < 0)
+                continue;
+            CSND_SetVol(channel[ear], muted ? 0 : earVolume[ear], 0);
+        }
+
+        /* Same again: the volume change is queued, and it only reaches
+         * the service when the queue is executed. */
+        csndExecCmds(true);
     }
 }
 

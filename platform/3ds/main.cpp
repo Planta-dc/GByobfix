@@ -26,8 +26,11 @@ int main(int argc, char* argv[])
     consoleInitBottom();
 
     /* The sound service. If it cannot be started the emulator runs
-     * silently; there is no point in refusing to start over it. */
-    audio_init();
+     * silently, because there is no point in refusing to start over it,
+     * but it says so: a game with no sound and no explanation is a
+     * thing that is very hard to report and very easy to fix. */
+    if (!audio_init())
+        printf("The sound service would not start. There will be no sound.\n");
 
     fs_init();
     mgr_init();

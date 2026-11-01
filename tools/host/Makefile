@@ -28,6 +28,13 @@ PLATFORM := $(HERE)/../../platform/3ds
 INCLUDES := -I$(HERE) -I$(HERE)/stub -I$(PLATFORM)/include -I$(PLATFORM) \
             -I$(HERE)/../../platform/common/include
 
+# The port is built with these, and they are not decoration: the sound
+# engine's header keeps part of the class behind _3DS, so a file that
+# does not define it sees a different class layout from the file that
+# does. That is not a warning, it is two different types with the same
+# name, and the tests would be looking at the wrong memory.
+DEFINES  := -D_3DS -DARM11
+
 BUILD    := build
 
 SHIM     := $(HERE)/3ds_shim.c
@@ -36,7 +43,7 @@ RENDERER := $(PLATFORM)/gbgfx.cpp
 GFX      := $(PLATFORM)/3dsgfx.cpp
 REFERENCE:= $(HERE)/reference_gbgfx.cpp
 
-TESTS    := check_render check_blit check_timing check_audio debug_render
+TESTS    := check_render check_blit check_timing check_audio check_apu debug_render
 BENCHES  := bench_render
 
 .PHONY: all check bench clean
@@ -47,23 +54,29 @@ $(BUILD):
 	@mkdir -p $(BUILD)
 
 $(BUILD)/%.o: %.c | $(BUILD)
-	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 $(BUILD)/%.o: %.cpp | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 $(BUILD)/platform_%.o: $(PLATFORM)/%.cpp | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 $(BUILD)/reference_gbgfx.o: $(REFERENCE) | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
+
+# The APU. The port builds it with _3DS and ARM11 defined, and the sound
+# engine's header keeps part of itself behind _3DS, so the test has to
+# define them too or it is not the same file.
+$(BUILD)/platform_soundengine.o: $(PLATFORM)/soundengine.cpp | $(BUILD)
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 $(BUILD)/stubs.o: $(STUBS) | $(BUILD)
-	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 # The sound transport is C.
 $(BUILD)/audio.o: $(PLATFORM)/audio.c | $(BUILD)
-	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) -c $< -o $@
+	$(CC) $(CFLAGS) $(DEPFLAGS) $(INCLUDES) $(DEFINES) -c $< -o $@
 
 # The renderer under test, and the renderer it replaced.
 RENDER_OBJS := $(BUILD)/platform_gbgfx.o $(BUILD)/platform_3dsgfx.o $(BUILD)/reference_gbgfx.o
@@ -78,6 +91,11 @@ debug_render: $(BUILD)/debug_render.o $(RENDER_OBJS) $(BUILD)/3ds_shim.o $(BUILD
 	$(CXX) $^ -o $@
 
 check_audio: $(BUILD)/check_audio.o $(BUILD)/audio.o $(BUILD)/3ds_shim.o $(BUILD)/stubs.o
+	$(CXX) $^ -o $@
+
+# The APU, and the samples it produces. The sound engine is the port's own
+# file, so it is compiled here like any other.
+check_apu: $(BUILD)/check_apu.o $(BUILD)/platform_soundengine.o $(BUILD)/audio.o $(BUILD)/3ds_shim.o $(BUILD)/stubs.o
 	$(CXX) $^ -o $@
 
 check_timing: $(BUILD)/check_timing.o $(BUILD)/platform_gbgfx.o $(BUILD)/platform_3dsgfx.o $(BUILD)/3ds_shim.o $(BUILD)/stubs.o $(BUILD)/audio.o
@@ -95,6 +113,8 @@ check: $(TESTS)
 	@./check_timing
 	@echo
 	@./check_audio
+	@echo
+	@./check_apu
 
 bench: $(BENCHES)
 	@./bench_render
