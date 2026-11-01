@@ -58,7 +58,22 @@ export	OUTPUT_FORMAT ?= 3dsx
 #---------------------------------------------------------------------------------
 # options for code generation
 #---------------------------------------------------------------------------------
-ARCH	:=	-marm
+# The ARM11 in a 3DS is an ARMv6K with a VFP unit and no hardware divide, and
+# it runs in ARM mode.
+#
+# -mfloat-abi=hard is not optional here and it is not the same as -mfpu=vfp.
+# The floating point unit and the floating point calling convention are two
+# different things, and the compiler picks the directory it takes its
+# libraries and its startup files from out of the two together. With the
+# soft-float convention the compiler looks in armv6k/, and the 3DS startup
+# file is not there: it is in armv6k/fpu/, which is the hard-float
+# directory. So the link fails with
+#
+#     ld: cannot find 3dsx_crt0.o: No such file or directory
+#
+# before it gets as far as the port's own code. libctru, which is built in
+# the same container and links fine, uses the same flags.
+ARCH	:=	-march=armv6k -mtune=mpcore -mfloat-abi=hard -mtp=soft -marm
 
 CFLAGS	:=	-Wall -O3 -mthumb-interwork -save-temps \
 			-mcpu=mpcore -mtune=mpcore -fomit-frame-pointer \
