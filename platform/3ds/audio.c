@@ -243,9 +243,10 @@ bool audio_init(void)
     }
 
     /* What the service was given, so that a report of "there is no sound"
-     * says something more than "there is no sound". */
-    printf("sound: the service gave channels %08x; playing on %d and %d\n",
-           (unsigned)csndChannels, channel[0], channel[1]);
+     * says something more than "there is no sound". The console is thirty
+     * columns wide, so this is put on two lines that fit. */
+    printf("sound: channels %08x\n", (unsigned)csndChannels);
+    printf("playing on %d and %d\n", channel[0], channel[1]);
 
     playStart = svcGetSystemTick();
     /* The writer starts a little way ahead of the service, so that the
