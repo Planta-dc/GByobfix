@@ -42,8 +42,25 @@ if [ ! -d "$INCLUDE_DIR" ]; then
     exit 2
 fi
 
-# Where libctru's sources are, so that a symbol declared in a header can be
-# checked against the code that implements it.
+# Where libctru's library is. The library is the authority on what libctru
+# defines: reading the symbols out of the archive that the linker will use
+# is better than reading them out of the source, because it cannot be wrong
+# about what ended up in the library.
+#
+# The library is found next to the headers, which is where devkitPro puts
+# it: $DEVKITPRO/libctru/include and $DEVKITPRO/libctru/lib/libctru.a.
+LIBCTRU_LIB=""
+for candidate in "$INCLUDE_DIR/../lib/libctru.a" "$INCLUDE_DIR/../../lib/libctru.a" \
+                 "$INCLUDE_DIR/../libctru/lib/libctru.a"; do
+    if [ -f "$candidate" ]; then
+        LIBCTRU_LIB="$(cd "$(dirname "$candidate")" && pwd)/$(basename "$candidate")"
+        break
+    fi
+done
+
+# Where libctru's sources are, if they are here. They are not in devkitPro's
+# package, which ships the built library and the headers, so this is only a
+# fallback for a tree that has been unpacked from source.
 LIBCTRU_SRC=""
 for candidate in "$INCLUDE_DIR/../source" "$INCLUDE_DIR/../../source" \
                  "$INCLUDE_DIR/../libctru/source"; do
@@ -216,13 +233,25 @@ for data in "$PLATFORM"/data/*; do
     echo "${symbol}_end" >> "$WORK/generated.txt"
 done
 
-# The symbols libctru provides: the ones its sources define.
+# The symbols libctru provides.
 #
-# The C and C++ sources are read for their definitions, which is why a
-# function returning a pointer is looked for as well as one returning
-# nothing. The assembly sources are read for the names they export, which
-# is where the system call wrappers live.
-if [ -n "$LIBCTRU_SRC" ]; then
+# The library is read first, because that is what the linker will use. The
+# archive is an ARM one, but nm reads any object file, so the host's nm
+# can read it.
+#
+# Only the symbols the library defines are of interest, and the names are
+# used as they are. libctru's headers are all extern "C", so its names are
+# not mangled and the port asks for them by the same name.
+if [ -n "$LIBCTRU_LIB" ]; then
+    nm --defined-only --format=posix "$LIBCTRU_LIB" 2>/dev/null \
+        | awk 'NF >= 2 && $2 ~ /^[A-Za-z]$/ { print $1 }' \
+        | grep -E '^[A-Za-z_][A-Za-z0-9_]*$' | sort -u > "$WORK/libctru.txt"
+elif [ -n "$LIBCTRU_SRC" ]; then
+    # The sources, for a tree that has been unpacked rather than installed.
+    # The C and C++ sources are read for their definitions, which is why a
+    # function returning a pointer is looked for as well as one returning
+    # nothing. The assembly sources are read for the names they export,
+    # which is where the system call wrappers live.
     {
         grep -rhoE '^[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\*?[[:space:]]*[A-Za-z_][A-Za-z0-9_]*[[:space:]]*\(' \
             "$LIBCTRU_SRC" --include='*.c' --include='*.cpp' 2>/dev/null \
