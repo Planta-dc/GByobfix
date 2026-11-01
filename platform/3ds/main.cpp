@@ -22,10 +22,12 @@ int main(int argc, char* argv[])
 	hidInit();
 	gfxInitDefault();
 
-	/* The top screen is 400 by 240, which is the wide mode; left in the
-	 * two dimensional mode it is 240 by 240, and the picture and the
-	 * interface would both be cut off down the side. */
-	gfxSetWide(true);
+	/* The top screen is 400 by 240 in the normal mode, which is the one
+	 * the picture is laid out for. The wide mode is the eight hundred
+	 * pixel one: there the framebuffer grows from 240 by 400 to 240 by
+	 * 800, so the picture would have to be laid out for eight hundred
+	 * columns instead of four hundred. It is left off. */
+	gfxSetWide(false);
 
 	/* The screens are given a framebuffer of sixteen bits a pixel rather
 	 * than twenty-four. The interface is drawn in that format, and the

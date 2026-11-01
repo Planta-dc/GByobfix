@@ -7,7 +7,12 @@
 #define GB_HEIGHT 144
 
 /* The 3DS screens, in the orientation they are held in. The top screen is
- * 400x240 and the bottom one 320x240. */
+ * 400x240 and the bottom one 320x240.
+ *
+ * The top screen has a second mode, the wide one, where it is 800x240:
+ * the framebuffer is 240 by 800 there instead of 240 by 400. The port
+ * leaves it off, so the numbers here are the ones the picture is laid out
+ * for, and the screen's real size is asked of the SDK at runtime. */
 #define TOP_SCREEN_WIDTH 400
 #define TOP_SCREEN_HEIGHT 240
 #define BOTTOM_SCREEN_WIDTH 320
@@ -24,9 +29,9 @@
  *
  * A picture pixel (x across, y down) is therefore at
  *
- *     (x * 240 + (239 - y)) * 3
+ *     (x * 240 + (239 - y)) * 2
  *
- * and a row of the picture is 720 bytes apart from the next one. This is
+ * and a row of the picture is 480 bytes apart from the next one. This is
  * why the picture is scaled in blocks rather than a line at a time.
  */
 #define GFX_FB_STRIDE 240
@@ -42,17 +47,11 @@
  */
 #define GFX_BYTES_PER_PIXEL 2
 
-/* The framebuffer sizes, in bytes. */
-#define TOP_FRAMEBUFFER_SIZE (240 * 400 * GFX_BYTES_PER_PIXEL)
-#define BOTTOM_FRAMEBUFFER_SIZE (240 * 320 * GFX_BYTES_PER_PIXEL)
-
 void drawPixel(u8* framebuffer, int x, int y, u32 color);
 
 /* The framebuffer the game is drawn into: the current one of the screen the
  * game is on. */
 u8* gfxGetGameFramebuffer(void);
-int gfxGetGameScreenWidth(void);
-int gfxGetGameScreenHeight(void);
 
 /* Clear the screen the game is on, so that the area around the picture is
  * black rather than whatever was there before. */

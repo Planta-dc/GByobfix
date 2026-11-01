@@ -62,8 +62,8 @@ typedef enum {
 /* The sizes the real SDK reports. The framebuffer is 240 pixels wide and
  * 400 or 320 tall, which is the picture on its side. */
 #define GSP_SCREEN_WIDTH 240
-#define GSP_SCREEN_HEIGHT_TOP 240
-#define GSP_SCREEN_HEIGHT_TOP_2X 400
+#define GSP_SCREEN_HEIGHT_TOP 400
+#define GSP_SCREEN_HEIGHT_TOP_2X 800
 #define GSP_SCREEN_HEIGHT_BOTTOM 320
 
 /* The framebuffer of each screen, two of them so that the swap can be
