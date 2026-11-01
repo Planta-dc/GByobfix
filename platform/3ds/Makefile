@@ -128,8 +128,17 @@ else
 #---------------------------------------------------------------------------------
 endif
 
-export OFILES	:=	$(addsuffix .o,$(BINFILES)) \
-			$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+# The objects are split in two. The ones made from a binary data file need a
+# rule of their own, because they are made by turning the file into
+# assembly, and the ones made from a source file are made by the compiler.
+# The header that goes with a binary data file is listed separately, because
+# the source files that include it have to wait for it to exist.
+export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
+export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
+
+export HFILES_BIN	:=	$(addsuffix .h,$(subst .,_,$(BINFILES)))
+
+export OFILES	:=	$(OFILES_BIN) $(OFILES_SRC)
 
 ifeq ($(EMBEDDED_ROM), true)
 
@@ -208,12 +217,20 @@ $(OUTPUT).smdh: .FORCE
 
 #---------------------------------------------------------------------------------
 # you need a rule like this for each extension you use as binary data
+#
+# The rule has to say what the data file is. Without a prerequisite, $< is
+# empty, so bin2s is given no file to convert and the object is never made.
+# The header is named in the rule as well, because the source files that
+# include it need something to wait for: the header is a side effect of
+# building the object, so nothing would otherwise say it had been written.
 #---------------------------------------------------------------------------------
-%.bin.o	:
+$(OFILES_SRC) : $(HFILES_BIN)
+
+%.bin.o	%_bin.h :	%.bin
 	@echo $(notdir $<)
 	@$(bin2o)
 
-%.gb.o	:
+%.gb.o	%_gb.h :	%.gb
 	@echo $(notdir $<)
 	@$(bin2o)
 
