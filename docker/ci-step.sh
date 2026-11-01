@@ -32,7 +32,11 @@ if [ "$status" -ne 0 ]; then
 
     # Only a handful of annotations survive per job, so spend them on the
     # lines that say what broke rather than on the whole tail.
-    grep -E 'rror|Error [0-9]|No such file|not found|No rule|undefined reference|cannot find' "$LOG" \
+    #
+    # FAIL and MISSING are here because the symbol check says what is
+    # wrong in those words and in no others, and a check that fails
+    # without saying why is the same as no check at all.
+    grep -E 'rror|Error [0-9]|No such file|not found|No rule|undefined reference|cannot find|^FAIL|MISSING' "$LOG" \
         | head -n 8 | while IFS= read -r line; do
             line="${line//$'\r'/}"
             echo "::error::$line"

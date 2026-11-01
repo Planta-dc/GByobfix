@@ -175,9 +175,25 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 all: $(BUILD)
 
 # invoke make from the "build" directory to run the 2nd part of this makefile
+#
+# $(MAKE), not "make", because $(MAKE) is how a recipe says "this is
+# another make". It is what passes the flags on.
+#
+# "make $(MAKEFLAGS)" does not work, and it is the reason this port had
+# never been packaged. MAKEFLAGS is not a list of flags to put on the
+# command line; it is a list of flags and variable settings to pass to
+# the sub-make through the environment. When the parent make was started
+# with -C, which is how the build scripts call it, the list contains a
+# bare "w", the short form of --print-directory. Put on the command
+# line, that is not a flag at all, it is the name of something to build,
+# and make says
+#
+#     make[1]: *** No rule to make target 'w'.  Stop.
+#
+# $(MAKE) hands the flags over the way make intends.
 $(BUILD):
 	@[ -d $@ ] || mkdir -p $@
-	@make --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
+	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
 
 #---------------------------------------------------------------------------------
@@ -187,13 +203,13 @@ clean:
 
 
 cia:
-	@make $(MAKEFLAGS) OUTPUT_FORMAT=cia
+	@$(MAKE) OUTPUT_FORMAT=cia
 
 3ds:
-	@make $(MAKEFLAGS) OUTPUT_FORMAT=3ds
+	@$(MAKE) OUTPUT_FORMAT=3ds
 
 3dsx:
-	@make $(MAKEFLAGS) OUTPUT_FORMAT=3dsx
+	@$(MAKE) OUTPUT_FORMAT=3dsx
 
 #---------------------------------------------------------------------------------
 else # make invoked from "build" directory
