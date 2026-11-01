@@ -45,8 +45,14 @@ if [ "$(id -u)" = "0" ]; then
 fi
 
 case "$TASK" in
-    all|cia|3ds)
+    all)
         ls -l "$ROOT/platform/3ds"/gameyob.cia "$ROOT/platform/3ds"/gameyob.3ds
+        ;;
+    cia)
+        ls -l "$ROOT/platform/3ds"/gameyob.cia
+        ;;
+    3ds)
+        ls -l "$ROOT/platform/3ds"/gameyob.3ds
         ;;
 esac
 case "$TASK" in
