@@ -66,6 +66,26 @@
  * sample. */
 #define AUDIO_BUFFER_FRAMES (AUDIO_RING_FRAMES + 1)
 
+/* The rate the service will really play at.
+ *
+ * The service is told a rate and turns it into a timer, and the timer is
+ * a whole number of ticks, so the rate it plays at is not the rate that
+ * was asked for. Asking for 49932 Hz gives a timer of 1342, and
+ * 67027964 ticks a second divided by 1342 is 49946 Hz.
+ *
+ * The transport works out where the service has got to from the console's
+ * clock, so it has to use the rate the service really plays at. Using
+ * the rate that was asked for makes the two drift apart at about
+ * fourteen frames a second, which is nothing to begin with and then,
+ * after about seven minutes, the writer catches up with the samples the
+ * service has not played yet and starts throwing them away.
+ *
+ * The rate is kept as the fraction the hardware actually uses, so that
+ * there is no rounding error either.
+ */
+#define AUDIO_RATE_NUM CSND_TIMER(1)
+#define AUDIO_RATE_DEN CSND_TIMER(AUDIO_RATE)
+
 static s16* ring[AUDIO_EARS];
 static int channel[AUDIO_EARS];
 static bool running;
@@ -96,10 +116,9 @@ static unsigned long long statCorrections;
  *
  * The service is told to play at AUDIO_RATE, and the console's clock says
  * how long it has been playing, so the position follows from the two. The
- * service's own clock is not exactly the console's clock, and the two
- * rates are not exactly the rate that was asked for; the difference is
- * small, it does not accumulate, and the sample correction below takes it
- * out of the signal.
+ * service's own clock is not exactly the console's clock, and the rate it
+ * plays at is not exactly the rate that was asked for, so the rate it
+ * really plays at is used here. See AUDIO_RATE_NUM above.
  */
 static u64 readPosition(void)
 {
@@ -107,7 +126,8 @@ static u64 readPosition(void)
     u64 seconds = elapsed / SYSCLOCK_ARM11;
     u64 rest = elapsed % SYSCLOCK_ARM11;
 
-    return seconds * AUDIO_RATE + (rest * AUDIO_RATE) / SYSCLOCK_ARM11;
+    return seconds * AUDIO_RATE_NUM / AUDIO_RATE_DEN +
+           (rest * AUDIO_RATE_NUM) / (AUDIO_RATE_DEN * (u64)SYSCLOCK_ARM11);
 }
 
 bool audio_init(void)
