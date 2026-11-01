@@ -101,6 +101,12 @@ Result csndInit(void)
     return 0;
 }
 
+/* The channels the service hands out. On the console this is whatever
+ * the service decided to give the application; here every channel is
+ * available, so the port behaves the same as it would on a console that
+ * handed out all of them. */
+u32 csndChannels = 0xFFFFFFFF;
+
 /* What the sound service was told to play, so that a test can look at
  * the samples the transport is actually handing over. The real service
  * keeps this to itself; here it is kept in the open. */
@@ -165,6 +171,18 @@ Result csndExecCmds(bool waitDone)
 void CSND_SetPlayState(u32 channel, u32 value)
 {
     (void)channel; (void)value;
+}
+
+/* The switch that says whether the console is making any sound at all.
+ * The port throws it before it sets the channels up; here it is only
+ * worth remembering that it was thrown. */
+int hostCsndPlaybackOn;
+
+void CSND_SetPlayStateR(u32 channel, u32 value)
+{
+    (void)channel;
+    if (value)
+        hostCsndPlaybackOn = 1;
 }
 
 Result CSND_FlushDataCache(const void* adr, u32 size)

@@ -161,12 +161,13 @@ static void printAudioStats(void)
     audio_stats stats;
     audio_get_stats(&stats);
 
-    printf("sound: %llu frames, %llu underruns, %llu drops, %llu corrections, %d ms behind\n",
+    printf("sound: %llu frames, %llu underruns, %llu drops, %llu corrections, %d ms behind, peak %d\n",
            (unsigned long long)stats.frames,
            (unsigned long long)stats.underruns,
            (unsigned long long)stats.drops,
            (unsigned long long)stats.corrections,
-           stats.latencyMs);
+           stats.latencyMs,
+           stats.peak);
 }
 
 

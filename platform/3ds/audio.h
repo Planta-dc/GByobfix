@@ -74,6 +74,7 @@ typedef struct {
     unsigned long long corrections; /* single samples dropped or repeated  */
     int latencyMs;        /* how far ahead of the speaker the emulator is */
     int fillFrames;       /* the same, in frames                          */
+    int peak;             /* the loudest sample of the last block         */
 } audio_stats;
 
 /* Start the sound service. Returns false if it could not be started, in

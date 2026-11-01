@@ -118,7 +118,11 @@ Result csndPlaySound(int chn, u32 flags, u32 sampleRate, float vol, float pan,
                      void* data0, void* data1, u32 size);
 void CSND_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes);
 void CSND_SetPlayState(u32 channel, u32 value);
+void CSND_SetPlayStateR(u32 channel, u32 value);
 Result CSND_FlushDataCache(const void* adr, u32 size);
+
+/* The channels the service handed out. */
+extern u32 csndChannels;
 
 static inline u32 CSND_VOL(float vol, float pan)
 {

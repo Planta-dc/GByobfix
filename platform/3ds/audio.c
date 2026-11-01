@@ -7,6 +7,7 @@
  */
 
 #include <3ds.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <3ds/allocator/linear.h>
@@ -38,7 +39,12 @@
 /* The channels to try. The service hands out the channels an
  * application may use, and a channel it has not handed out cannot be
  * played on: csndPlaySound says so and does nothing. Rather than guess
- * which ones are free, they are tried in turn until two of them work.
+ * which ones are free, the ones the service handed out are looked at.
+ *
+ * The channels below eight are the ones that play recorded sound; the
+ * ones above are the tone and noise channels. The sound here is
+ * recorded, so the lower ones are preferred, but the service may hand
+ * out only the upper ones, and then those are used.
  */
 #define AUDIO_CHANNEL_FIRST 0
 #define AUDIO_CHANNEL_LAST 16
@@ -60,11 +66,22 @@
 #define AUDIO_FILL_MIN 1024
 #define AUDIO_FILL_MAX (AUDIO_RING_FRAMES - 1024)
 
-/* The ring holds the samples the service loops over. One extra sample is
- * needed at the front: the service plays the buffer once from the start
- * before it starts looping, and the loop has to start at the second
- * sample. */
-#define AUDIO_BUFFER_FRAMES (AUDIO_RING_FRAMES + 1)
+/* The ring holds the samples the service loops over. The loop does not
+ * start at the beginning of the buffer: the service plays the buffer
+ * once from the start before it starts looping, so the loop has to be
+ * inside the buffer it plays first.
+ *
+ * The loop starts two frames in, which puts the address the service is
+ * given for it on a four byte boundary. The service reads the samples
+ * over the bus, and the bus reads them a word at a time, so an address
+ * that is not a multiple of four is an address the service may not be
+ * able to read at all.
+ */
+#define AUDIO_LOOP_OFFSET_FRAMES 2
+
+/* The buffer holds the ring and the frames in front of it that the loop
+ * starts in. */
+#define AUDIO_BUFFER_FRAMES (AUDIO_RING_FRAMES + AUDIO_LOOP_OFFSET_FRAMES)
 
 /* The rate the service will really play at.
  *
@@ -90,6 +107,11 @@ static s16* ring[AUDIO_EARS];
 static int channel[AUDIO_EARS];
 static bool running;
 static bool muted;
+
+/* The loudest sample handed over in the last block. It says whether the
+ * APU is making a sound at all, which is worth knowing when the speaker
+ * says nothing. */
+static int lastPeak;
 
 /* The volume each ear's channel is played at, so that muting and
  * unmuting can put back exactly what was there before. */
@@ -130,6 +152,18 @@ static u64 readPosition(void)
            (rest * AUDIO_RATE_NUM) / (AUDIO_RATE_DEN * (u64)SYSCLOCK_ARM11);
 }
 
+/*
+ * Where in the buffer the sample for a position goes.
+ *
+ * The ring is the loop the service is given, and it sits at the end of the
+ * buffer: the frames in front of it are the ones the service plays once
+ * before it starts looping.
+ */
+static u64 bufferIndex(u64 position)
+{
+    return AUDIO_LOOP_OFFSET_FRAMES + (position % AUDIO_RING_FRAMES);
+}
+
 bool audio_init(void)
 {
     if (running)
@@ -148,28 +182,46 @@ bool audio_init(void)
         channel[ear] = -1;
     }
 
-    /* The service plays the buffer from the start once and then loops from
-     * the second sample onwards, so the ring is the loop and the sample in
-     * front of it is the one that is played first.
+    /* The service reads the ring over the bus, so it has to be told that
+     * the ring is empty and not holding whatever was in memory before. */
+    for (int ear = 0; ear < AUDIO_EARS; ear++)
+        CSND_FlushDataCache(ring[ear], AUDIO_BUFFER_FRAMES * sizeof(s16));
+
+    /* The service has a switch that says whether the console is making
+     * any sound at all. Nothing turns it on by itself: a channel can be
+     * set up, given its samples and be playing perfectly well, and the
+     * service will sit on it and say nothing.
+     *
+     * csndPlaySound() does not throw the switch. The upstream port had
+     * the command written out and never called it, which is the most
+     * likely reason nothing ever came out of the speaker. */
+    CSND_SetPlayStateR(0, 1);
+    csndExecCmds(true);
+
+    /* The service plays the buffer from the start once and then loops
+     * from the loop point onwards, so the ring is the loop and the frames
+     * in front of it are the ones that are played first.
      *
      * Each ear gets its own channel, panned to its own side. The service
      * is given a volume and a pan and works out a volume for each speaker
      * from them, so the pan has to be all the way over for the ear to get
      * the whole of the signal.
      *
-     * The channels are tried in turn because the service decides which
-     * ones an application may use, and a channel it has not handed out
-     * cannot be played on. csndPlaySound says so and does nothing, so
-     * the first two that answer are the ones to use. */
+     * The channels are taken from the ones the service handed out, in
+     * order, because the service decides which ones an application may
+     * use and a channel it has not handed out cannot be played on. */
     int next = 0;
     for (int chn = AUDIO_CHANNEL_FIRST; chn <= AUDIO_CHANNEL_LAST && next < AUDIO_EARS; chn++) {
+        if (!(csndChannels & (1u << chn)))
+            continue;
+
         int ear = next;
         float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
 
         Result r = csndPlaySound(chn,
                                   SOUND_REPEAT | SOUND_FORMAT_16BIT | SOUND_ENABLE,
                                   AUDIO_RATE, 1.0f, pan,
-                                  ring[ear], ring[ear] + 1,
+                                  ring[ear], ring[ear] + AUDIO_LOOP_OFFSET_FRAMES,
                                   AUDIO_BUFFER_FRAMES * sizeof(s16));
         if (R_FAILED(r))
             continue;
@@ -180,10 +232,20 @@ bool audio_init(void)
     }
 
     if (next < AUDIO_EARS) {
-        /* Not enough channels to play both ears. */
-        audio_exit();
-        return false;
+        /* Only one channel. That is mono, and it is better than nothing:
+         * the left ear is played and the right one is not. */
+        if (next == 0) {
+            audio_exit();
+            return false;
+        }
+
+        channel[1] = -1;
     }
+
+    /* What the service was given, so that a report of "there is no sound"
+     * says something more than "there is no sound". */
+    printf("sound: the service gave channels %08x; playing on %d and %d\n",
+           (unsigned)csndChannels, channel[0], channel[1]);
 
     playStart = svcGetSystemTick();
     /* The writer starts a little way ahead of the service, so that the
@@ -296,11 +358,17 @@ void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
             extra = AUDIO_RING_FRAMES;
 
         for (u64 i = 0; i < extra; i++) {
-            u64 index = written % AUDIO_RING_FRAMES;
-            ring[0][1 + index] = lastLeft;
-            ring[1][1 + index] = lastRight;
+            u64 index = bufferIndex(written);
+            ring[0][index] = lastLeft;
+            ring[1][index] = lastRight;
             written++;
         }
+
+        /* The repeated samples are read over the bus like any others. */
+        for (int ear = 0; ear < AUDIO_EARS; ear++)
+            CSND_FlushDataCache(ring[ear] + bufferIndex(written - extra),
+                                extra * sizeof(s16));
+
         statCorrections += extra;
     }
 
@@ -316,12 +384,26 @@ void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
 
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
         const s16* src = ear ? right : left;
-        s16* dst = ring[ear] + 1 + index;
+        s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
 
         memcpy(dst, src, first * sizeof(s16));
         if (first < frames)
-            memcpy(ring[ear] + 1, src + first, (frames - first) * sizeof(s16));
+            memcpy(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES, src + first,
+                   (frames - first) * sizeof(s16));
     }
+
+    /* The loudest sample in the block, so that a report of "there is no
+     * sound" can say whether the APU made one. */
+    int peak = 0;
+    for (unsigned i = 0; i < frames; i++) {
+        int l = left[i];
+        int r = right[i];
+        if (l < 0) l = -l;
+        if (r < 0) r = -r;
+        if (l > peak) peak = l;
+        if (r > peak) peak = r;
+    }
+    lastPeak = peak;
 
     lastLeft = left[frames - 1];
     lastRight = right[frames - 1];
@@ -332,10 +414,11 @@ void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
     /* The service reads the samples over the bus, so the cache has to be
      * told about them. Only the part that was written is flushed. */
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        s16* dst = ring[ear] + 1 + index;
+        s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
         CSND_FlushDataCache(dst, first * sizeof(s16));
         if (first < frames)
-            CSND_FlushDataCache(ring[ear] + 1, (frames - first) * sizeof(s16));
+            CSND_FlushDataCache(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES,
+                                (frames - first) * sizeof(s16));
     }
 }
 
@@ -349,6 +432,7 @@ void audio_get_stats(audio_stats* out)
     out->underruns = statUnderruns;
     out->drops = statDrops;
     out->corrections = statCorrections;
+    out->peak = lastPeak;
 
     if (running) {
         s64 fill = (s64)(written - readPosition());
