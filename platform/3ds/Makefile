@@ -65,7 +65,11 @@ CFLAGS	:=	-Wall -O3 -mthumb-interwork -save-temps \
 			-mfpu=vfp -ffast-math -mword-relocations \
 			$(ARCH)
 
-CFLAGS	+=	-DVERSION_STRING=\"`git describe --always --abbrev=4`\"\
+# The version the program reports. It is the description of the commit it
+# was built from, when there is one.
+VERSION := $(shell git describe --always --abbrev=4 2>/dev/null || echo unknown)
+
+CFLAGS	+=	-DVERSION_STRING=\"$(VERSION)\"\
 			-include "3ds/types.h"
 
 CFLAGS	+=	$(INCLUDE) -DARM11 -D_3DS
