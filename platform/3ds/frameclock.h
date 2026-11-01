@@ -21,7 +21,7 @@
  * svcGetSystemTick() counts at SYSCLOCK_ARM11 Hz (268111856). One Game Boy
  * frame is
  *
- *     70224 * SYSCLOCK_ARM11 / 4194304  =  4489162.2... ticks
+ *     70224 * SYSCLOCK_ARM11 / 4194304  =  4488918.06... ticks
  *
  * which is not a whole number of ticks, so the deadline is kept as a
  * rational, NUM/DEN ticks per frame:
