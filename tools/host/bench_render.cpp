@@ -89,7 +89,7 @@ int main(int argc, char* argv[])
     if (argc > 1)
         frames = atoi(argv[1]);
 
-    static u8 framebuffer[400 * 240 * 3];
+    static u8 framebuffer[400 * 240 * 2];
 
     Gameboy gb;
 

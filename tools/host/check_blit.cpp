@@ -27,10 +27,12 @@
 
 
 /* The picture's colours, so that a pixel can be traced back to the index
- * it came from. */
-static u32 indexColour(u8 index)
+ * it came from. The framebuffer is 16 bit, so the colour is a packed
+ * RGB565 one, and the multiplier puts a bit in each of the three
+ * channels. */
+static u16 indexColour(u8 index)
 {
-    return 0x000101u * (index + 1);
+    return (u16)(0x0201u * (index + 1));
 }
 
 static void setPalette(void)
@@ -48,11 +50,10 @@ static void fillPicture(void)
 }
 
 /* The pixel of the framebuffer at a position on the screen. */
-static u32 pixelAt(const u8* framebuffer, int x, int y)
+static u16 pixelAt(const u8* framebuffer, int x, int y)
 {
-    int offset = (x * 240 + (239 - y)) * 3;
-    return (u32)framebuffer[offset] | ((u32)framebuffer[offset + 1] << 8) |
-           ((u32)framebuffer[offset + 2] << 16);
+    int offset = (x * 240 + (239 - y)) * 2;
+    return (u16)(framebuffer[offset] | ((u32)framebuffer[offset + 1] << 8));
 }
 
 /* The index of the source pixel that a destination pixel should hold, or
@@ -93,7 +94,7 @@ static int failures = 0;
 static void checkGeometry(int screenWidth, int screenHeight,
                           int originX, int originY, int num, int den)
 {
-    static u8 framebuffer[400 * 240 * 3];
+    static u8 framebuffer[400 * 240 * 2];
     static int source[400 * 240];
 
     memset(framebuffer, 0, sizeof(framebuffer));
@@ -114,7 +115,7 @@ static void checkGeometry(int screenWidth, int screenHeight,
     for (int y = 0; y < screenHeight; y++) {
         for (int x = 0; x < screenWidth; x++) {
             int from = source[y * 400 + x];
-            u32 colour = pixelAt(framebuffer, x, y);
+            u16 colour = pixelAt(framebuffer, x, y);
 
             if (from < 0) {
                 /* Nothing should be painted outside the picture. */
@@ -123,10 +124,10 @@ static void checkGeometry(int screenWidth, int screenHeight,
                 continue;
             }
 
-            u32 expected = indexColour(gameFrame[from]);
+            u16 expected = indexColour(gameFrame[from]);
             if (colour != expected) {
                 if (wrongPlace < 3)
-                    printf("  %dx%d at %d,%d: expected %06x, got %06x\n",
+                    printf("  %dx%d at %d,%d: expected %04x, got %04x\n",
                            num, den, x, y, expected, colour);
                 wrongPlace++;
             }

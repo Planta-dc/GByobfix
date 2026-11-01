@@ -21,6 +21,13 @@ int main(int argc, char* argv[])
 	aptInit();
 	hidInit();
 	gfxInitDefault();
+
+	/* The screens are given a framebuffer of sixteen bits a pixel rather
+	 * than twenty-four. The interface is drawn in that format, and the
+	 * picture is a third less for the bus to carry: the blit that draws
+	 * it writes two bytes a pixel instead of three. */
+	gfxSetScreenFormat(GFX_TOP, GSP_RGB565_OES);
+	gfxSetScreenFormat(GFX_BOTTOM, GSP_RGB565_OES);
 	fsInit();
 
     consoleInitBottom();

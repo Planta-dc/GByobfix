@@ -31,11 +31,21 @@
  */
 #define GFX_FB_STRIDE 240
 
-/* The framebuffer sizes, in bytes. */
-#define TOP_FRAMEBUFFER_SIZE (240 * 400 * 3)
-#define BOTTOM_FRAMEBUFFER_SIZE (240 * 320 * 3)
+/*
+ * The framebuffer is 16 bits per pixel.
+ *
+ * The 3DS can be given a framebuffer of 24 bits a pixel or 16. Sixteen is
+ * what the interface is drawn in, and it is a third less for the bus to
+ * carry: the picture is the same size on the screen, but the blit that
+ * draws it writes two bytes a pixel instead of three, and the whole screen
+ * is a third smaller in memory.
+ */
+#define GFX_BYTES_PER_PIXEL 2
 
-u32 getPixel(u8* framebuffer, int x, int y);
+/* The framebuffer sizes, in bytes. */
+#define TOP_FRAMEBUFFER_SIZE (240 * 400 * GFX_BYTES_PER_PIXEL)
+#define BOTTOM_FRAMEBUFFER_SIZE (240 * 320 * GFX_BYTES_PER_PIXEL)
+
 void drawPixel(u8* framebuffer, int x, int y, u32 color);
 
 /* The framebuffer the game is drawn into: the current one of the screen the
@@ -73,7 +83,7 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
  * were still black. This renderer keeps indices instead, and the index 64
  * means "never drawn".
  */
-extern u32 palColour[65];
+extern u16 palColour[65];
 
 /* The finished picture, as palette indices. */
 extern u8 gameFrame[GB_WIDTH * GB_HEIGHT];
@@ -107,4 +117,11 @@ static inline void expandTileRow(u32 low, u32 high, bool flipX, u8* out)
 
 inline u32 RGB24(int red, int green, int blue) {
     return red<<16 | green<<8 | blue;
+}
+
+/* The colour the framebuffer is written in: five bits of red, six of green
+ * and five of blue. The SDK has the conversion; this is just a name for it
+ * that reads the same as RGB24 above. */
+inline u16 rgb565(int red, int green, int blue) {
+    return RGB8_to_565(red, green, blue);
 }

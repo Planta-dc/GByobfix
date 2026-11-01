@@ -123,7 +123,7 @@ int main(int argc, char* argv[])
         trials = atoi(argv[1]);
 
     static u8 reference[400 * 240 * 3];
-    static u8 replacement[400 * 240 * 3];
+    static u8 replacement[400 * 240 * 2];
 
     int differences = 0;
     int firstX = -1, firstY = -1, firstTrial = -1;
@@ -148,20 +148,26 @@ int main(int argc, char* argv[])
 
         for (int y = 48; y < 48 + 144; y++) {
             for (int x = 120; x < 120 + 160; x++) {
-                /* The framebuffer holds the picture on its side. */
-                int offset = (x * 240 + (239 - y)) * 3;
-                u32 refPixel = (reference[offset + 2] << 16) |
-                               (reference[offset + 1] << 8) |
-                               reference[offset];
-                u32 newPixel = (replacement[offset + 2] << 16) |
-                               (replacement[offset + 1] << 8) |
-                               replacement[offset];
+                /* The framebuffer holds the picture on its side. The
+                 * old renderer draws 24 bit pixels and the port's
+                 * renderer draws 16 bit ones, so the old one is packed
+                 * into 16 bits before the two are compared. */
+                int offset = (x * 240 + (239 - y));
+                u32 refPixel = (reference[offset * 3 + 2] << 16) |
+                               (reference[offset * 3 + 1] << 8) |
+                               reference[offset * 3];
+                u32 newPixel = ((u32)replacement[offset * 2 + 1] << 8) |
+                               replacement[offset * 2];
 
-                if (refPixel != newPixel) {
+                u16 refPacked = (u16)(((refPixel >> 16 & 0xff) >> 3) << 11) |
+                                (u16)(((refPixel >> 8 & 0xff) >> 2) << 5) |
+                                (u16)((refPixel & 0xff) >> 3);
+
+                if (refPacked != newPixel) {
                     if (!differences) {
                         firstX = x;
                         firstY = y;
-                        firstRef = refPixel;
+                        firstRef = refPacked;
                         firstNew = newPixel;
                         firstTrial = trial;
                     }
