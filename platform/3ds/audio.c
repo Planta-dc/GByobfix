@@ -113,6 +113,41 @@ static bool muted;
  * says nothing. */
 static int lastPeak;
 
+/* The same, for each ear, and how loud the block was as a percentage of
+ * full scale. The peak on its own says whether there was a sound; the
+ * level says how much of one there was, which is the difference between a
+ * quiet game and a silent one. */
+static int lastPeakLeft;
+static int lastPeakRight;
+static int lastLevel;
+
+/*
+ * The integer square root.
+ *
+ * The maths library has one of these, but the library is a megabyte of
+ * code the port would carry for the sake of one number in a diagnostic,
+ * and this is the classic bit by bit version: twenty lines and no library.
+ */
+static u32 integerRoot(u64 value)
+{
+    u64 remainder = 0;
+    u64 root = 0;
+    int i;
+
+    for (i = 0; i < 32; i++) {
+        root <<= 1;
+        remainder = (remainder << 2) | (value >> 62);
+        value <<= 2;
+
+        if (root < remainder) {
+            root++;
+            remainder -= root + 1;
+        }
+    }
+
+    return (u32)(root >> 1);
+}
+
 /* The volume each ear's channel is played at, so that muting and
  * unmuting can put back exactly what was there before. */
 static u32 earVolume[AUDIO_EARS];
@@ -132,6 +167,65 @@ static unsigned long long statFrames;
 static unsigned long long statUnderruns;
 static unsigned long long statDrops;
 static unsigned long long statCorrections;
+
+/*
+ * The test tone.
+ *
+ * A tone of a known frequency and a known level, played through the same
+ * transport as the game's sound. It is what tells the two apart: if the
+ * tone comes out of the speaker, the transport and the service are working
+ * and whatever is wrong is in the APU; if it does not, the fault is in the
+ * transport.
+ *
+ * The tone is a sine at full scale, which is as loud as the transport can
+ * play. The APU's own output is about a twentieth of that, so a game that
+ * is quiet and a game that is silent look the same until this is played.
+ */
+static int testToneHz;
+static u32 testToneStep; /* the phase step per sample, in 1/65536 of a cycle */
+static u32 testTonePhase;
+
+/* How many blocks have been handed over, and how many had been by the last
+ * time the tone was pumped. They are what tells the pump that the tone has
+ * already been written this frame. */
+static u64 submitCount;
+static u64 pumpedCount;
+
+/* A quarter of a sine wave, in sixty four steps. The rest of the wave is
+ * made out of this by mirroring it, so there is no maths in the frame
+ * loop and no library to link for it. */
+static const s16 toneQuarter[64] = {
+         0,    736,   1472,   2207,   2941,   3672,   4402,   5129,
+      5853,   6573,   7289,   8001,   8709,   9410,  10107,  10797,
+     11481,  12157,  12827,  13488,  14142,  14787,  15423,  16050,
+     16667,  17274,  17871,  18457,  19032,  19595,  20147,  20686,
+     21213,  21727,  22229,  22716,  23190,  23650,  24096,  24528,
+     24944,  25346,  25732,  26103,  26458,  26797,  27120,  27426,
+     27716,  27990,  28246,  28486,  28708,  28913,  29101,  29271,
+     29424,  29558,  29675,  29774,  29856,  29919,  29964,  29991,
+};
+
+/* The next sample of the tone. */
+static s16 toneSample(void)
+{
+    u32 phase = testTonePhase;
+    unsigned quadrant = (phase >> 14) & 3;
+    unsigned step = (phase >> 8) & 0x3F;
+    s16 value;
+
+    testTonePhase = phase + testToneStep;
+
+    if (quadrant == 0)
+        value = toneQuarter[step];
+    else if (quadrant == 1)
+        value = toneQuarter[63 - step];
+    else if (quadrant == 2)
+        value = -toneQuarter[step];
+    else
+        value = -toneQuarter[63 - step];
+
+    return value;
+}
 
 /*
  * How many frames the service has played.
@@ -322,7 +416,16 @@ bool audio_is_muted(void)
     return muted;
 }
 
-void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
+/*
+ * Hand a block of samples to the ring.
+ *
+ * This is where the transport's bookkeeping happens: how far ahead of the
+ * service the writer is, and what to do when the writer is too far ahead
+ * or too far behind. The test tone goes through the same path, because
+ * the point of it is to show what the transport does, not to go around it.
+ */
+static void transportWrite(const int16_t* left, const int16_t* right,
+                           unsigned frames, bool tone)
 {
     if (!running)
         return;
@@ -383,28 +486,83 @@ void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
     if (first > frames)
         first = frames;
 
-    for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        const s16* src = ear ? right : left;
-        s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
+    if (tone) {
+        /* The tone is made in the left ear's ring and copied to the right
+         * one: both ears get the same signal and the channels are panned
+         * to the sides. */
+        s16* dst = ring[0] + AUDIO_LOOP_OFFSET_FRAMES + index;
 
-        memcpy(dst, src, first * sizeof(s16));
+        for (unsigned i = 0; i < first; i++)
+            dst[i] = toneSample();
+        if (first < frames) {
+            s16* wrap = ring[0] + AUDIO_LOOP_OFFSET_FRAMES;
+            for (unsigned i = 0; i < frames - first; i++)
+                wrap[i] = toneSample();
+        }
+
+        memcpy(ring[1] + AUDIO_LOOP_OFFSET_FRAMES + index, dst,
+               first * sizeof(s16));
         if (first < frames)
-            memcpy(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES, src + first,
+            memcpy(ring[1] + AUDIO_LOOP_OFFSET_FRAMES,
+                   ring[0] + AUDIO_LOOP_OFFSET_FRAMES,
                    (frames - first) * sizeof(s16));
+    }
+    else {
+        for (int ear = 0; ear < AUDIO_EARS; ear++) {
+            const s16* src = ear ? right : left;
+            s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
+
+            memcpy(dst, src, first * sizeof(s16));
+            if (first < frames)
+                memcpy(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES, src + first,
+                       (frames - first) * sizeof(s16));
+        }
     }
 
     /* The loudest sample in the block, so that a report of "there is no
      * sound" can say whether the APU made one. */
     int peak = 0;
-    for (unsigned i = 0; i < frames; i++) {
-        int l = left[i];
-        int r = right[i];
-        if (l < 0) l = -l;
-        if (r < 0) r = -r;
-        if (l > peak) peak = l;
-        if (r > peak) peak = r;
+    int peakLeft = 0;
+    int peakRight = 0;
+    u64 sumSquares = 0;
+
+    if (tone) {
+        /* The tone is at full scale, so there is nothing to measure. */
+        peak = 30000;
+        peakLeft = 30000;
+        peakRight = 30000;
+        /* A sine at full scale is at about minus three decibels, so its
+         * level is about two thirds of full scale. */
+        lastLevel = 65;
     }
+    else {
+        for (unsigned i = 0; i < frames; i++) {
+            int l = left[i];
+            int r = right[i];
+            if (l < 0) l = -l;
+            if (r < 0) r = -r;
+            if (l > peakLeft) peakLeft = l;
+            if (r > peakRight) peakRight = r;
+            sumSquares += (u64)left[i] * (u64)left[i] +
+                          (u64)right[i] * (u64)right[i];
+        }
+
+        peak = peakLeft > peakRight ? peakLeft : peakRight;
+
+        /* How loud the block was, as a percentage of full scale. The root
+         * is worked out without the maths library: the mean square of the
+         * two ears is the square of the level, so the level is its root.
+         */
+        if (frames) {
+            u64 mean = sumSquares / (frames * 2);
+            u32 rms = integerRoot(mean);
+            lastLevel = (int)((u64)rms * 100 / 32767);
+        }
+    }
+
     lastPeak = peak;
+    lastPeakLeft = peakLeft;
+    lastPeakRight = peakRight;
 
     lastLeft = left[frames - 1];
     lastRight = right[frames - 1];
@@ -434,6 +592,13 @@ void audio_get_stats(audio_stats* out)
     out->drops = statDrops;
     out->corrections = statCorrections;
     out->peak = lastPeak;
+    out->peakLeft = lastPeakLeft;
+    out->peakRight = lastPeakRight;
+    out->level = lastLevel;
+    out->channelMask = running ? csndChannels : 0;
+    out->channelLeft = channel[0];
+    out->channelRight = channel[1];
+    out->testToneHz = testToneHz;
 
     if (running) {
         s64 fill = (s64)(written - readPosition());
@@ -446,4 +611,107 @@ void audio_get_stats(audio_stats* out)
         out->fillFrames = 0;
         out->latencyMs = 0;
     }
+}
+
+/*
+ * What the service says about the channels.
+ *
+ * The transport knows what it asked for; this asks the service what it got.
+ * A channel can be set up perfectly and still be sitting there doing
+ * nothing, and the only way to tell the difference is to read the
+ * service's own idea of the channel back.
+ */
+void audio_read_hardware(audio_hardware* out)
+{
+    if (!out)
+        return;
+
+    memset(out, 0, sizeof *out);
+
+    if (!running)
+        return;
+
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        CSND_ChnInfo info;
+        Result result;
+
+        if (channel[ear] < 0)
+            continue;
+
+        result = csndGetState((u32)channel[ear], &info);
+        if (R_FAILED(result))
+            continue;
+
+        out->readable = true;
+        out->active[ear] = info.active;
+        out->reg[ear][0] = info.value[0];
+        out->reg[ear][1] = info.value[1];
+        out->reg[ear][2] = info.value[2];
+    }
+}
+
+/*
+ * The test tone.
+ *
+ * Turning it on stops the game's own sound from being played: the tone is
+ * the only signal in the ring. That is deliberate - the point of the tone
+ * is to show what the transport and the service do on their own, and
+ * mixing the game's sound into it would hide the answer.
+ */
+void audio_set_test_tone(int hz)
+{
+    if (hz < 0)
+        hz = 0;
+
+    testToneHz = hz;
+    testTonePhase = 0;
+
+    if (hz > 0) {
+        /* The phase step per sample, in 1/65536 of a cycle. */
+        testToneStep = (u32)((u64)hz * 65536 / AUDIO_RATE);
+    }
+    else {
+        testToneStep = 0;
+    }
+}
+
+int audio_test_tone_hz(void)
+{
+    return testToneHz;
+}
+
+
+/*
+ * Hand a block of stereo samples to the transport.
+ *
+ * When the test tone is on it is what is played, and what the APU made is
+ * not: there is one signal in the ring at a time.
+ */
+void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
+{
+    transportWrite(left, right, frames, testToneHz > 0);
+    submitCount++;
+}
+
+/*
+ * Keep the test tone going when there is nothing else to play it.
+ *
+ * The tone is written with the samples the emulator hands over, so with no
+ * game running - or with the game paused - there would be nothing to write
+ * it with and the tone would stop after the ring had been played out. The
+ * port calls this every frame so that the tone is there to be heard even
+ * with nothing else going on.
+ */
+void audio_pump_test_tone(void)
+{
+    if (!running || testToneHz <= 0)
+        return;
+
+    /* If the emulator has already handed over its samples this frame, the
+     * tone went into the ring with them. */
+    if (submitCount != pumpedCount)
+        return;
+
+    pumpedCount = submitCount;
+    transportWrite(NULL, NULL, AUDIO_FRAMES_PER_GB_FRAME, true);
 }

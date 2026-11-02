@@ -261,3 +261,15 @@ void uiDrawStats(const char* line1, const char* line2, const char* line3) {
 	scr_stats(line1, line2, line3);
 	ui_present();
 }
+
+/*
+ * The diagnostics.
+ *
+ * The lines come from the diagnostics module, which is where the numbers
+ * are put together.
+ */
+void uiDrawDiagnostics(const char *const *lines, int n) {
+	uiSetScreen(uiScreen());
+	scr_diagnostics("Diagnostics", lines, n, "X log   Y dump   B back");
+	ui_present();
+}

@@ -30,6 +30,9 @@
 #define MARGIN   10
 #define CONTENT_W (UI_W - 2 * MARGIN)
 
+/* How many lines the diagnostics panel shows. */
+#define DIAG_PANEL_ROWS 12
+
 
 /* ------------------------------------------------------------------------- */
 /* Shared chrome                                                             */
@@ -444,8 +447,7 @@ void scr_message(const char *title, const char *l1, const char *l2,
  * catch up. They are in a panel rather than in the text console, so that
  * the screen does not have a page of text on it.
  */
-void scr_stats(const char *l1, const char *l2, const char *l3)
-{
+void scr_stats(const char *l1, const char *l2, const char *l3){
 	ui_clear(C_BG);
 
 	const int w = 190;
@@ -462,6 +464,35 @@ void scr_stats(const char *l1, const char *l2, const char *l3)
 	ui_text(&ui_font_small, x + 12, ly, or_empty(l2), C_DIM, w - 24);
 	ly += 15;
 	ui_text(&ui_font_small, x + 12, ly, or_empty(l3), C_DIM, w - 24);
+}
+
+/*
+ * The diagnostics.
+ *
+ * A panel of the port's own numbers. The lines are made by the caller,
+ * because they come from all over the place and this file only draws.
+ */
+void scr_diagnostics(const char *title, const char *const *lines, int n,
+		     const char *hint)
+{
+	const int y = 38;
+	const int h = 170;
+
+	ui_clear(C_BG);
+	draw_header(title, "", C_TEXT);
+
+	ui_rrect(MARGIN, y, CONTENT_W, h, 12, C_PANEL);
+	ui_rrect(MARGIN, y, 4, h, 2, C_ACCENT);
+
+	int ly = y + 6;
+	for (int i = 0; i < n && i < DIAG_PANEL_ROWS; i++) {
+		ui_text(&ui_font_small, MARGIN + 14, ly, or_empty(lines[i]),
+			C_TEXT, CONTENT_W - 28);
+		ly += 13;
+	}
+
+	if (hint != NULL)
+		ui_text_center(&ui_font_small, UI_W / 2, 214, hint, C_DIM);
 }
 
 void scr_blank(void)

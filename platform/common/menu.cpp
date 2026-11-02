@@ -21,6 +21,8 @@
 #ifdef _3DS
 #include "printconsole.h"
 #include "ui3ds.h"
+#include "audio.h"
+#include "diag.h"
 #endif
 
 const int MENU_DS   = 1;
@@ -341,6 +343,80 @@ void versionInfoFunc(int value) {
     printVersionInfo();
 }
 
+/*
+ * The diagnostics.
+ *
+ * A panel of the port's own numbers, redrawn every frame while it is up:
+ * what the sound service is doing, what the transport is doing, how long
+ * the frames are taking. It is the only place the port says what it is
+ * really doing, so it is the place to look when the sound is not what it
+ * should be.
+ */
+#ifdef _3DS
+static void diagnosticsUpdateFunc() {
+    int count = 0;
+    const char *const *lines = diagLines(&count);
+
+    uiDrawDiagnostics(lines, count);
+
+    if (keyJustPressed(mapMenuKey(MENU_KEY_B)) ||
+            keyJustPressed(mapMenuKey(MENU_KEY_A))) {
+        forceReleaseKey(mapMenuKey(MENU_KEY_B));
+        forceReleaseKey(mapMenuKey(MENU_KEY_A));
+        diagSetPanelOpen(false);
+        closeSubMenu();
+        return;
+    }
+
+    if (keyJustPressed(mapMenuKey(MENU_KEY_X))) {
+        forceReleaseKey(mapMenuKey(MENU_KEY_X));
+        diagSetLogging(!diagLogging());
+        diagLog("log %s\n", diagLogging() ? "on" : "off");
+        return;
+    }
+
+    if (keyJustPressed(mapMenuKey(MENU_KEY_Y))) {
+        forceReleaseKey(mapMenuKey(MENU_KEY_Y));
+        diagDump();
+        return;
+    }
+}
+#endif
+
+void diagnosticsFunc(int value) {
+#ifdef _3DS
+    diagSetPanelOpen(true);
+    displayGraphicalSubMenu(diagnosticsUpdateFunc);
+    return;
+#endif
+    (void)value;
+}
+
+/*
+ * The test tone.
+ *
+ * A tone of a known frequency at full scale, played through the same
+ * transport as the game's sound. It is what tells the three things apart:
+ * if the tone comes out of the speaker, the transport and the service are
+ * working and whatever is wrong is in the APU; if it does not, the fault
+ * is in the transport.
+ */
+void soundTestFunc(int value) {
+#ifdef _3DS
+    int hz = 0;
+
+    if (value == 1)
+        hz = 440;
+    else if (value == 2)
+        hz = 1000;
+
+    audio_set_test_tone(hz);
+    diagLog("test tone %d Hz\n", hz);
+    return;
+#endif
+    (void)value;
+}
+
 void setChanEnabled(int chan, int value) {
     if (value == 0)
         disableChannel(chan);
@@ -458,7 +534,7 @@ SubMenu menuList[] = {
     },
     {
         "Debug",
-        7,
+        9,
         {
             {"Wait for Vblank", vblankWaitFunc, 2, {"Off","On"}, 0, MENU_DS},
             {"Hblank", hblankEnableFunc, 2, {"Off","On"}, 1, MENU_DS},
@@ -466,7 +542,9 @@ SubMenu menuList[] = {
             {"Sound", soundEnableFunc, 2, {"Off","On"}, 1, MENU_ALL},
             {"Sound Timing Fix", hyperSoundFunc, 2, {"Off","On"}, 1, MENU_DS},
             {"ROM Info", romInfoFunc, 0, {}, 0, MENU_ALL},
-            {"Version Info", versionInfoFunc, 0, {}, 0, MENU_ALL}
+            {"Version Info", versionInfoFunc, 0, {}, 0, MENU_ALL},
+            {"Diagnostics", diagnosticsFunc, 0, {}, 0, MENU_3DS},
+            {"Sound Test", soundTestFunc, 3, {"Off","440 Hz","1 kHz"}, 0, MENU_3DS}
         }
     },
     {

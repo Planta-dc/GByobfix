@@ -162,6 +162,21 @@ void CSND_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes)
     }
 }
 
+/* What the service would say about a channel. On the console this is the
+ * channel's own registers; here the only thing that can be said is
+ * whether the channel was set up to play at all. */
+Result csndGetState(u32 channel, CSND_ChnInfo* out)
+{
+    if (!out)
+        return -1;
+    if (channel >= 32)
+        return -1;
+
+    memset(out, 0, sizeof *out);
+    out->active = (hostCsndFlags[channel] & SOUND_ENABLE) ? 1 : 0;
+    return 0;
+}
+
 Result csndExecCmds(bool waitDone)
 {
     (void)waitDone;

@@ -90,5 +90,16 @@ void scr_message(const char *title, const char *l1, const char *l2,
 /* A small panel with the sound's numbers, in the corner of the screen. */
 void scr_stats(const char *l1, const char *l2, const char *l3);
 
+/*
+ * The diagnostics: a panel of lines.
+ *
+ * The lines are the port's own numbers - the sound, the frame clock, the
+ * emulator - and there is one line for each thing worth watching. The
+ * panel is meant to be read while the game is running, so it is drawn in
+ * the small font and the hint at the bottom says what the keys do.
+ */
+void scr_diagnostics(const char *title, const char *const *lines, int n,
+		     const char *hint);
+
 /* Flat background only. */
 void scr_blank(void);
