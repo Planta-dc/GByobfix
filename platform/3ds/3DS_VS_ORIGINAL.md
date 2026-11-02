@@ -196,3 +196,8 @@ sound transport's handover to the service; it cannot check what the
 speaker does with the samples. The sound test (Debug -> Sound Test) is
 what does that, and the diagnostics panel (Debug -> Diagnostics) says
 whether the service thinks the channels are playing.
+
+The panel also says how many times the service **refused** the commands
+the transport gave it. That is the difference between "there is no sound
+because the game is not making any" and "there is no sound because the
+service would not play it", which nothing else on the screen can tell.
