@@ -140,6 +140,13 @@ int main()
         return 1;
     }
 
+    /* The transport plays each ear on a channel of its own. The two ears
+     * are not the first two channels the service handed out: each ear has
+     * two buffers, and each buffer has a channel, so the channels are
+     * asked for rather than assumed. */
+    audio_stats stats;
+    audio_get_stats(&stats);
+
     runFrames(&se, FRAMES_TO_RUN);
 
     if (hostCsndCalls < 2) {
@@ -151,15 +158,15 @@ int main()
         printf("  The service was given %d buffers, one for each ear.\n",
                hostCsndCalls);
         for (int ear = 0; ear < 2; ear++) {
-            int chn = hostCsndChn[ear];
+            int chn = ear ? stats.channelRight : stats.channelLeft;
             printf("  Ear %d: channel %d, rate %u Hz, volume %.2f, pan %.2f, %u bytes.\n",
                    ear, chn, hostCsndRate[chn], hostCsndVol[chn], hostCsndPan[chn],
                    hostCsndSize[chn]);
         }
     }
 
-    const s16* left = (const s16*)hostCsndData[hostCsndChn[0]];
-    const s16* right = (const s16*)hostCsndData[hostCsndChn[1]];
+    const s16* left = (const s16*)hostCsndData[stats.channelLeft];
+    const s16* right = (const s16*)hostCsndData[stats.channelRight];
 
     if (!left || !right) {
         printf("FAIL: the service was never given a buffer to play.\n");
@@ -170,7 +177,7 @@ int main()
      * starts two frames in: the service reads the samples over the bus
      * and the address it is given for the loop has to be a multiple of
      * four bytes. */
-    int loopFrames = (int)(hostCsndSize[hostCsndChn[0]] / sizeof(s16)) - 2;
+    int loopFrames = (int)(hostCsndSize[stats.channelLeft] / sizeof(s16)) - 2;
 
     int leftPeak = peakOf(left + 2, loopFrames);
     int rightPeak = peakOf(right + 2, loopFrames);
@@ -208,7 +215,7 @@ int main()
      * speaker half of the volume, so both ears hear a mixture of the
      * two channels at half the volume. */
     for (int ear = 0; ear < 2; ear++) {
-        int chn = hostCsndChn[ear];
+        int chn = ear ? stats.channelRight : stats.channelLeft;
         float pan = hostCsndPan[chn];
 
         if (pan > -0.9f && pan < 0.9f) {
@@ -218,17 +225,17 @@ int main()
         }
     }
 
-    if (hostCsndPan[hostCsndChn[0]] >= 0.0f) {
+    if (hostCsndPan[stats.channelLeft] >= 0.0f) {
         printf("FAIL: the left ear is panned to the right.\n");
         failures++;
     }
-    if (hostCsndPan[hostCsndChn[1]] <= 0.0f) {
+    if (hostCsndPan[stats.channelRight] <= 0.0f) {
         printf("FAIL: the right ear is panned to the left.\n");
         failures++;
     }
 
-    if (hostCsndVol[hostCsndChn[0]] != 1.0f ||
-        hostCsndVol[hostCsndChn[1]] != 1.0f) {
+    if (hostCsndVol[stats.channelLeft] != 1.0f ||
+        hostCsndVol[stats.channelRight] != 1.0f) {
         printf("FAIL: the channels are not played at full volume.\n");
         failures++;
     }
@@ -294,7 +301,7 @@ int main()
 
         int muted = 1;
         for (int ear = 0; ear < 2; ear++) {
-            if (hostCsndVolSet[hostCsndChn[ear]] != 0)
+            if (hostCsndVolSet[ear ? stats.channelRight : stats.channelLeft] != 0)
                 muted = 0;
         }
         if (muted) {
@@ -309,7 +316,7 @@ int main()
 
         int restored = 1;
         for (int ear = 0; ear < 2; ear++) {
-            if (hostCsndVolSet[hostCsndChn[ear]] == 0)
+            if (hostCsndVolSet[ear ? stats.channelRight : stats.channelLeft] == 0)
                 restored = 0;
         }
         if (restored) {

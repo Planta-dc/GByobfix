@@ -41,6 +41,8 @@ following the display's vertical blank, and the sound is handed to the
 sound service in blocks that follow one another, with nothing timed from
 the clock. GameYob's own emulator and its own APU are unchanged.
 
+`platform/3ds/3DS_VS_ORIGINAL.md` compares the port with the original
+GameYob release file by file, and says what was put back and why.
 `platform/3ds/3DS_PERFORMANCE.md` says what was measured and what was
 not, and `BUILD.md` says how to build it and how to run the checks. The
 checks are the interesting part: the renderer is compared with the

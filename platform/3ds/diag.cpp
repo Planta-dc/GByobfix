@@ -347,11 +347,12 @@ void diagTick(void)
         audio_stats stats;
         audio_get_stats(&stats);
 
-        diagLog("%6llu f  %5u us  late %u  |  sound %s  ch %d/%d  "
+        diagLog("%6llu f  %5u us  late %u  |  sound %s  ch %d,%d/%d,%d  "
                 "blk %d (%d ms)  peak %d  level %d%%  gain %d\n",
                 (unsigned long long)frameCount, avgPeriodUs, lateFrames,
                 stats.running ? "on" : "off", stats.channelLeft,
-                stats.channelRight, stats.blockFrames, stats.latencyMs,
+                stats.channelLeftAlt, stats.channelRight,
+                stats.channelRightAlt, stats.blockFrames, stats.latencyMs,
                 stats.peak, stats.level, stats.gain);
     }
 }
@@ -394,8 +395,11 @@ void diagDump(void)
     APPEND("\n--- dump %llu frames ---\n", (unsigned long long)frameCount);
 
     APPEND("sound service %s\n", stats.running ? "running" : "stopped");
-    APPEND("channel mask %08x  left %d  right %d\n", stats.channelMask,
-           stats.channelLeft, stats.channelRight);
+    APPEND("channel mask %08x  in use %08x\n", stats.channelMask,
+           stats.channelsUsed);
+    APPEND("channels  left %d %d   right %d %d   %s\n", stats.channelLeft,
+           stats.channelLeftAlt, stats.channelRight, stats.channelRightAlt,
+           stats.mono ? "mono" : "stereo");
     APPEND("test tone %d Hz\n", stats.testToneHz);
     APPEND("block %d frames  %d ms\n", stats.blockFrames, stats.latencyMs);
     APPEND("peak %d  left %d  right %d  level %d%%\n", stats.peak,
@@ -406,9 +410,12 @@ void diagDump(void)
 
     if (fresh.readable) {
         for (int ear = 0; ear < 2; ear++) {
-            APPEND("ear %d  active %d  regs %08x %08x %08x\n", ear,
-                   fresh.active[ear], fresh.reg[ear][0], fresh.reg[ear][1],
-                   fresh.reg[ear][2]);
+            for (int buf = 0; buf < 2; buf++) {
+                APPEND("ear %d buffer %d  active %d  regs %08x %08x %08x\n",
+                       ear, buf, fresh.active[ear][buf],
+                       fresh.reg[ear][buf][0], fresh.reg[ear][buf][1],
+                       fresh.reg[ear][buf][2]);
+            }
         }
     }
     else {
@@ -452,19 +459,25 @@ const char *const *diagLines(int *count)
     else
         strcpy(romName, "no rom");
 
-    snprintf(lineText[n], sizeof lineText[n], "sound    %s%s%s   ch %d/%d",
+    /* The four channels: the two buffers of each ear, and each buffer's
+     * own channel. */
+    snprintf(lineText[n], sizeof lineText[n], "sound    %s%s%s  ch %d,%d/%d,%d",
              stats.running ? "running" : "stopped",
              audio_is_muted() ? " muted" : "",
              soundDisabled ? " apu off" : "",
-             stats.channelLeft, stats.channelRight);
+             stats.channelLeft, stats.channelLeftAlt, stats.channelRight,
+             stats.channelRightAlt);
     n++;
 
-    snprintf(lineText[n], sizeof lineText[n], "mask     %08x  active %d/%d",
-             stats.channelMask, hardware.active[0], hardware.active[1]);
+    /* Whether the service says each channel is playing. A channel that
+     * is set up perfectly and is not playing is the thing to look for. */
+    snprintf(lineText[n], sizeof lineText[n], "mask     %08x  act %d%d/%d%d",
+             stats.channelMask, hardware.active[0][0], hardware.active[0][1],
+             hardware.active[1][0], hardware.active[1][1]);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "regs     L %08x  R %08x",
-             hardware.reg[0][0], hardware.reg[1][0]);
+             hardware.reg[0][0][0], hardware.reg[1][0][0]);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "block    %d frames  %d ms",

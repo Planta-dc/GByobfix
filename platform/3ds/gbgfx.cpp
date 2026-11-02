@@ -701,10 +701,14 @@ static void refreshModifiedPalettes(void) {
 
 /* Pack a colour the way the framebuffer stores it.
  *
- * The framebuffer holds three bytes a pixel, blue, green and red, and the
- * blit writes the low byte of the colour first. So the colour is kept as
- * red in the top byte, green in the middle and blue at the bottom, and the
- * three bytes can be copied out without being shuffled. */
+ * The original port's framebuffer held three bytes a pixel, blue, green
+ * and red. This one holds two: the framebuffer is sixteen bits a pixel,
+ * five bits of red, six of green and five of blue, and the blit writes
+ * the low byte of the colour first.
+ *
+ * The colour is kept as red in the top byte, green in the middle and blue
+ * at the bottom, which is how the emulator's palette registers hold it,
+ * and the packing below takes it apart and puts it back together. */
 static inline u16 packColour(u32 rgb24) {
     int red   = (rgb24 >> 16) & 0xFF;
     int green = (rgb24 >> 8) & 0xFF;

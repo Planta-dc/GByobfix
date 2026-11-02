@@ -17,26 +17,25 @@
  *
  * The design
  * ----------
- * This is the original port's design, which is simpler than the ring that
- * was here before it and does not depend on the clock:
+ * This is the original port's design:
  *
- *   - the sound is handed over in blocks, one block for each ear;
- *   - when a block is full it is given to the service to play, and the
- *     service is told to play it once;
- *   - the next block is filled while that one is playing, and is given
- *     to the service when it is full.
+ *   - each ear has two buffers;
+ *   - the service plays one of them while the other is being filled;
+ *   - when the one being filled is full, it is handed over to be played,
+ *     and the one that was being played is filled instead.
  *
- * The blocks follow one another without a gap: the sample after the last
- * one of a block is the first one of the next, because the emulator
- * produced them in that order. So the sound the service plays is the
- * sound the emulator made, in one piece.
+ * The buffer the service is reading is never the one being written to, so
+ * the samples that come out are the samples that went in, in one piece.
+ * A transport with one buffer per ear cannot do that: it would be
+ * writing over the samples the service is reading, and what came out
+ * would be a mixture of two frames of sound.
  *
- * The ring that was here before worked out where the service was in its
- * buffer from the console's clock, which is an assumption about the
- * service's rate. If the assumption is wrong the writer and the service
- * drift apart, and the sound goes to pieces in a way that is very hard
- * to see. Nothing here is timed from the clock, so there is nothing to
- * drift.
+ * Each buffer has a channel of its own, so the address the service is
+ * given for a buffer never changes. The channel that is handed a buffer
+ * is the one that played it a block ago, so it has been idle since and
+ * the service is not asked to stop something in the middle of it.
+ *
+ * Nothing here is worked out from the clock, so nothing here can drift.
  *
  * Two things the original did that are not done here, because they are
  * why the original made no sound at all:
@@ -58,28 +57,22 @@
 
 #include "audio.h"
 
-/*
- * The rate everything below runs at.
- *
- * GameYob's APU is sampled every 84 Game Boy cycles, which is 49932.57 Hz.
- * The sound service takes an integer rate, and 49932 is the closest one to
- * it. The difference is 11 parts per million, which is under half a
- * sample over a block.
- */
-#define AUDIO_RATE 49932u
-
-/* Samples the APU produces in one Game Boy frame: 70224 cycles / 84. */
-#define AUDIO_FRAMES_PER_GB_FRAME 836
+/* The rate and the block size are in audio.h, so that the rest of the
+ * port can ask the transport what it is doing. */
 
 /* The two ears of the Game Boy's stereo output. */
 #define AUDIO_EARS 2
+
+/* The buffers each ear has: the one being played and the one being
+ * filled. */
+#define AUDIO_BUFFERS 2
 
 /* The pan each ear's channel is played at: all the way over. */
 #define AUDIO_PAN_LEFT (-1.0f)
 #define AUDIO_PAN_RIGHT (1.0f)
 
 /*
- * The size of a block, in frames.
+ * The size of a buffer, in frames.
  *
  * The original used eight, which is 134 ms of delay between the game and
  * the speaker - the sound would be a seventh of a second behind the
@@ -89,7 +82,7 @@
  */
 #define AUDIO_BLOCK_FRAMES 2
 
-/* The samples in a block. */
+/* The samples in a buffer. */
 #define AUDIO_BLOCK_SAMPLES (AUDIO_FRAMES_PER_GB_FRAME * AUDIO_BLOCK_FRAMES)
 
 /*
@@ -109,18 +102,23 @@
 
 /* The channels to try. The service hands out which channels an
  * application may use; the ones below eight are the ones that play
- * recorded sound, and the ones above are the tone and noise channels. */
+ * recorded sound, and the ones from eight up are the tone and noise
+ * channels, which are not what these samples are. */
 #define AUDIO_CHANNEL_FIRST 0
-#define AUDIO_CHANNEL_LAST 16
+#define AUDIO_CHANNEL_LAST 7
 
 /* The volume each ear's channel is played at, so that muting and
  * unmuting can put back exactly what was there before. */
 static u32 earVolume[AUDIO_EARS];
 
-/* The block each ear is being filled, and how far into it the samples
- * have gone. */
-static s16* block[AUDIO_EARS];
-static int channel[AUDIO_EARS];
+/* The buffers, and the channel each one is played on. A channel that is
+ * -1 is not used. */
+static s16* buffer[AUDIO_EARS][AUDIO_BUFFERS];
+static int channel[AUDIO_EARS][AUDIO_BUFFERS];
+
+/* Which buffer is being filled, and how far into it the samples have
+ * gone. */
+static int fillBuffer[AUDIO_EARS];
 static unsigned fillPos[AUDIO_EARS];
 
 /* The sample rate, as the service wants it: a timer value, not a rate. */
@@ -222,19 +220,24 @@ static s16 toneSample(void)
 static bool running;
 static bool muted;
 
+/* Whether there is only one channel for both ears, in which case the two
+ * ears are mixed into it, and which ear's buffers that channel plays. */
+static bool mono;
+static int primaryEar = 0;
+
 /* Frames the emulator has handed over. */
 static unsigned long long statFrames;
 
-/* The blocks that have been given to the service. */
+/* The buffers that have been given to the service. */
 static unsigned long long statBlocks;
 
 /*
- * The flags for the channel: sixteen bit samples, played once, on this
+ * The flags for a channel: sixteen bit samples, played once, on this
  * channel, at the sample rate.
  *
  * The repeat mode is in bits eleven and ten: two is one shot, which plays
- * the block and stops. That is what the original port did, and it is what
- * makes the blocks follow one another.
+ * the buffer and stops. That is what the original port did, and it is
+ * what makes the buffers follow one another.
  */
 static u32 channelFlags(int chn)
 {
@@ -243,21 +246,23 @@ static u32 channelFlags(int chn)
 }
 
 /*
- * Give the service a block to play.
+ * Give the service a buffer to play.
  *
  * The command is written into the service's queue and sent when the queue
- * is executed. The queue is not waited for: the block is 33 ms long and
+ * is executed. The queue is not waited for: the buffer is 33 ms long and
  * it is given to the service 33 ms before the one before it ends, so
  * there is plenty of time, and waiting would stall the frame.
  */
-static void playBlock(int ear)
+static void playBuffer(int ear, int buf)
 {
-    if (channel[ear] < 0)
+    int chn = channel[ear][buf];
+
+    if (chn < 0)
         return;
 
-    u32 address = (u32)osConvertVirtToPhys(block[ear]);
+    u32 address = (u32)osConvertVirtToPhys(buffer[ear][buf]);
 
-    CSND_SetChnRegs(channelFlags(channel[ear]),
+    CSND_SetChnRegs(channelFlags(chn),
                      address, address,
                      AUDIO_BLOCK_SAMPLES * sizeof(s16),
                      earVolume[ear], 0);
@@ -278,20 +283,25 @@ bool audio_init(void)
         blockTimer = 0xFFFF;
 
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        block[ear] = linearAlloc(AUDIO_BLOCK_SAMPLES * sizeof(s16));
-        if (!block[ear]) {
-            audio_exit();
-            return false;
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            buffer[ear][buf] = linearAlloc(AUDIO_BLOCK_SAMPLES * sizeof(s16));
+            if (!buffer[ear][buf]) {
+                audio_exit();
+                return false;
+            }
+            memset(buffer[ear][buf], 0, AUDIO_BLOCK_SAMPLES * sizeof(s16));
+            channel[ear][buf] = -1;
         }
-        memset(block[ear], 0, AUDIO_BLOCK_SAMPLES * sizeof(s16));
-        channel[ear] = -1;
+        fillBuffer[ear] = 0;
         fillPos[ear] = 0;
     }
 
-    /* The service reads the block over the bus, so it has to be told that
-     * it is empty and not holding whatever was in memory before. */
+    /* The service reads the buffers over the bus, so it has to be told
+     * that they are empty and not holding whatever was in memory
+     * before. */
     for (int ear = 0; ear < AUDIO_EARS; ear++)
-        CSND_FlushDataCache(block[ear], AUDIO_BLOCK_SAMPLES * sizeof(s16));
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++)
+            CSND_FlushDataCache(buffer[ear][buf], AUDIO_BLOCK_SAMPLES * sizeof(s16));
 
     /* The service has a switch that says whether the console is making
      * any sound at all. Nothing turns it on by itself: a channel can be
@@ -304,40 +314,81 @@ bool audio_init(void)
     CSND_SetPlayStateR(0, 1);
     csndExecCmds(true);
 
-    /* The channels are taken from the ones the service handed out, in
-     * order, because the service decides which ones an application may
-     * use and a channel it has not handed out cannot be played on. One
-     * for each ear, panned to its own side. */
-    int next = 0;
-    for (int chn = AUDIO_CHANNEL_FIRST; chn <= AUDIO_CHANNEL_LAST && next < AUDIO_EARS; chn++) {
-        if (!(csndChannels & (1u << chn)))
-            continue;
+    /* The channels the service handed out, in order. The service decides
+     * which ones an application may use, and a channel it has not handed
+     * out cannot be played on, so they are asked for rather than
+     * assumed. */
+    int available[AUDIO_EARS * AUDIO_BUFFERS];
+    int count = 0;
 
-        int ear = next;
-        float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
-
-        channel[ear] = chn;
-        earVolume[ear] = CSND_VOL(1.0f, pan);
-        next++;
+    for (int chn = AUDIO_CHANNEL_FIRST;
+         chn <= AUDIO_CHANNEL_LAST &&
+         count < (int)(sizeof available / sizeof available[0]);
+         chn++) {
+        if (csndChannels & (1u << chn))
+            available[count++] = chn;
     }
 
-    if (next == 0) {
+    if (count == 0) {
         /* The service handed out no channels at all. There is nothing to
          * play on. */
         audio_exit();
         return false;
     }
 
-    if (next < AUDIO_EARS) {
-        /* Only one channel. That is mono, and it is better than nothing:
-         * the two ears are mixed into it. */
-        channel[1] = -1;
+    /* Each ear's first buffer gets a channel of its own, then each ear's
+     * second buffer. Each buffer wants a channel of its own, so that the
+     * address the service is given for a buffer never changes. */
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            int index = ear * AUDIO_BUFFERS + buf;
+
+            channel[ear][buf] = (index < count) ? available[index] : -1;
+        }
     }
 
-    /* The channels are set up to play the first block, which is empty
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
+
+        earVolume[ear] = CSND_VOL(1.0f, pan);
+    }
+
+    /* An ear with one channel plays both of its buffers on it: the
+     * address changes from one buffer to the next, and the service reads
+     * the address again when the channel is told to play. */
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        if (channel[ear][1] < 0)
+            channel[ear][1] = channel[ear][0];
+    }
+
+    /* An ear with no channel at all is played on the other ear's
+     * channel, and the two ears are mixed into it. That is worse than
+     * stereo, but it is better than silence. */
+    if (channel[0][0] < 0 || channel[1][0] < 0) {
+        mono = true;
+
+        if (channel[0][0] >= 0)
+            primaryEar = 0;
+        else
+            primaryEar = 1;
+    }
+
+    /* The channels are set up to play their first buffer, which is empty
      * until the emulator has produced something. */
-    for (int ear = 0; ear < AUDIO_EARS; ear++)
-        playBlock(ear);
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            if (channel[ear][buf] < 0)
+                continue;
+
+            playBuffer(ear, buf);
+
+            /* Command one: this starts the channel playing. The command
+             * above sets the channel's registers and the switch turns the
+             * sound on, but this is the command that says "play", and
+             * there is no harm in saying it. */
+            CSND_SetPlayState(channel[ear][buf], 1);
+        }
+    }
 
     csndExecCmds(true);
 
@@ -345,7 +396,8 @@ bool audio_init(void)
      * says something more than "there is no sound". The console is thirty
      * columns wide, so this is put on two lines that fit. */
     printf("sound: channels %08x\n", (unsigned)csndChannels);
-    printf("playing on %d and %d\n", channel[0], channel[1]);
+    printf("playing on %d %d %d %d\n", channel[0][0], channel[0][1],
+           channel[1][0], channel[1][1]);
 
     statFrames = 0;
     statBlocks = 0;
@@ -365,29 +417,35 @@ void audio_exit(void)
      * the switch above, which stops everything and throws the channel's
      * registers away. */
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        if (block[ear] && channel[ear] >= 0) {
-            CSND_SetPlayState(channel[ear], 0);
-            started = true;
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            if (buffer[ear][buf] && channel[ear][buf] >= 0) {
+                CSND_SetPlayState(channel[ear][buf], 0);
+                started = true;
+            }
         }
     }
 
     /* The commands above are only written into the service's queue. They
      * are not sent until the queue is executed, and until then the
-     * service is still playing the block that is about to be given back.
+     * service is still playing the buffer that is about to be given back.
      * So the queue is executed and waited for before the memory goes
      * away. */
     if (started)
         csndExecCmds(true);
 
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        if (block[ear]) {
-            linearFree(block[ear]);
-            block[ear] = NULL;
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            if (buffer[ear][buf]) {
+                linearFree(buffer[ear][buf]);
+                buffer[ear][buf] = NULL;
+            }
+            channel[ear][buf] = -1;
         }
-        channel[ear] = -1;
     }
 
     running = false;
+    mono = false;
+    primaryEar = 0;
 }
 
 void audio_set_muted(bool newMuted)
@@ -399,16 +457,15 @@ void audio_set_muted(bool newMuted)
 
     if (running) {
         for (int ear = 0; ear < AUDIO_EARS; ear++) {
-            if (channel[ear] < 0)
-                continue;
+            for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+                if (channel[ear][buf] < 0)
+                    continue;
 
-            float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
-            earVolume[ear] = muted ? 0 : CSND_VOL(1.0f, pan);
-
-            /* Command nine: this changes the volume without touching
-             * where the channel is playing, so the block that is playing
-             * now goes quiet as well. */
-            CSND_SetVol(channel[ear], earVolume[ear], 0);
+                /* Command nine: this changes the volume without touching
+                 * where the channel is playing, so the buffer that is
+                 * playing now goes quiet as well. */
+                CSND_SetVol(channel[ear][buf], muted ? 0 : earVolume[ear], 0);
+            }
         }
 
         /* Same again: the volume change is queued, and it only reaches
@@ -425,9 +482,9 @@ bool audio_is_muted(void)
 /*
  * Hand a block of stereo samples to the transport.
  *
- * The samples go into the block that is being filled, made louder on the
- * way. When the block is full it is given to the service to play and the
- * next one is started.
+ * The samples go into the buffer that is being filled, made louder on the
+ * way. When the buffer is full it is handed to the service to play, and
+ * the buffer that was being played is filled instead.
  */
 static void transportWrite(const int16_t* left, const int16_t* right, unsigned frames)
 {
@@ -443,10 +500,16 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
         const int16_t* src;
         unsigned done = 0;
 
-        if (channel[ear] < 0) {
-            /* One channel only: the two ears are mixed into it. */
-            if (ear != 0)
+        if (channel[ear][0] < 0)
+            continue;
+
+        if (mono) {
+            /* One channel for both ears: the two ears are mixed into
+             * it, and only the ear that has the channel runs its loop,
+             * so that the buffer is written once and not twice. */
+            if (ear != primaryEar)
                 continue;
+
             src = NULL;
         }
         else {
@@ -456,7 +519,7 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
         while (done < frames) {
             unsigned space = AUDIO_BLOCK_SAMPLES - fillPos[ear];
             unsigned chunk = (frames - done < space) ? frames - done : space;
-            s16* dst = block[ear] + fillPos[ear];
+            s16* dst = buffer[ear][fillBuffer[ear]] + fillPos[ear];
             int peak = 0;
 
             if (testToneHz > 0) {
@@ -506,7 +569,15 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
                 sumSquares += (u64)(unsigned)value * (u64)(unsigned)value;
             }
 
-            if (ear == 0) {
+            if (mono) {
+                /* With one channel for both ears, the same samples come
+                 * out of both. */
+                if (peak > peakLeft)
+                    peakLeft = peak;
+                if (peak > peakRight)
+                    peakRight = peak;
+            }
+            else if (ear == 0) {
                 if (peak > peakLeft)
                     peakLeft = peak;
             }
@@ -519,13 +590,21 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
             done += chunk;
 
             if (fillPos[ear] >= AUDIO_BLOCK_SAMPLES) {
+                int filled = fillBuffer[ear];
+
                 fillPos[ear] = 0;
 
-                /* The block is full: the service is told to play it, and
-                 * the samples are on the card's way to the hardware. */
-                playBlock(ear);
-                CSND_FlushDataCache(block[ear],
+                /* The buffer that was just filled is handed to the
+                 * service, and the buffer that was being played is
+                 * filled instead. The service is reading one and the
+                 * emulator is writing the other, so nothing is written
+                 * over what is being read. */
+                playBuffer(ear, filled);
+                CSND_FlushDataCache(buffer[ear][filled],
                                     AUDIO_BLOCK_SAMPLES * sizeof(s16));
+
+                fillBuffer[ear] = 1 - filled;
+
                 if (ear == 0)
                     statBlocks++;
                 send = true;
@@ -534,7 +613,7 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
     }
 
     /* The commands are sent once, for both ears, and the service is not
-     * waited for: it has a whole block's worth of time before the next
+     * waited for: it has a whole buffer's worth of time before the next
      * one is due. */
     if (send)
         csndExecCmds(false);
@@ -543,7 +622,7 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
      * worked out without the maths library: the mean square of the
      * samples is the square of the level, so the level is its root. */
     if (frames) {
-        u64 count = (u64)frames * (channel[1] >= 0 ? 2 : 1);
+        u64 count = (u64)frames * (mono ? 1 : 2);
         u32 rms = integerRoot(count ? sumSquares / count : 0);
         lastLevel = (int)((u64)rms * 100 / 32767);
     }
@@ -581,13 +660,21 @@ void audio_get_stats(audio_stats* out)
     out->peakRight = lastPeakRight;
     out->level = lastLevel;
     out->channelMask = running ? csndChannels : 0;
-    out->channelLeft = channel[0];
-    out->channelRight = channel[1];
+    out->channelLeft = channel[0][0];
+    out->channelRight = channel[1][0];
+    out->channelLeftAlt = channel[0][1];
+    out->channelRightAlt = channel[1][1];
+    out->mono = mono;
+    out->channelsUsed = 0;
+    for (int ear = 0; ear < AUDIO_EARS; ear++)
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++)
+            if (channel[ear][buf] >= 0)
+                out->channelsUsed |= 1u << channel[ear][buf];
     out->testToneHz = testToneHz;
     out->gain = AUDIO_GAIN;
 
-    /* The size of a block is how far the sound is behind the picture:
-     * the emulator fills a block and the service plays it afterwards. */
+    /* The size of a buffer is how far the sound is behind the picture:
+     * the emulator fills a buffer and the service plays it afterwards. */
     out->blockFrames = AUDIO_BLOCK_SAMPLES;
     out->latencyMs = (int)((u64)AUDIO_BLOCK_SAMPLES * 1000 / AUDIO_RATE);
 }
@@ -611,21 +698,23 @@ void audio_read_hardware(audio_hardware* out)
         return;
 
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        CSND_ChnInfo info;
-        Result result;
+        for (int buf = 0; buf < AUDIO_BUFFERS; buf++) {
+            CSND_ChnInfo info;
+            Result result;
 
-        if (channel[ear] < 0)
-            continue;
+            if (channel[ear][buf] < 0)
+                continue;
 
-        result = csndGetState((u32)channel[ear], &info);
-        if (R_FAILED(result))
-            continue;
+            result = csndGetState((u32)channel[ear][buf], &info);
+            if (R_FAILED(result))
+                continue;
 
-        out->readable = true;
-        out->active[ear] = info.active;
-        out->reg[ear][0] = info.value[0];
-        out->reg[ear][1] = info.value[1];
-        out->reg[ear][2] = info.value[2];
+            out->readable = true;
+            out->active[ear][buf] = info.active;
+            out->reg[ear][buf][0] = info.value[0];
+            out->reg[ear][buf][1] = info.value[1];
+            out->reg[ear][buf][2] = info.value[2];
+        }
     }
 }
 

@@ -17,26 +17,25 @@
  *
  * The design
  * ----------
- * This is the original port's design, which is simpler than the ring that
- * was here before it and does not depend on the clock:
+ * This is the original port's design:
  *
- *   - the sound is handed over in blocks, one block for each ear;
- *   - when a block is full it is given to the service to play, and the
- *     service is told to play it once;
- *   - the next block is filled while that one is playing, and is given
- *     to the service when it is full.
+ *   - each ear has two buffers;
+ *   - the service plays one of them while the other is being filled;
+ *   - when the one being filled is full, it is handed over to be played,
+ *     and the one that was being played is filled instead.
  *
- * The blocks follow one another without a gap: the sample after the last
- * one of a block is the first one of the next, because the emulator
- * produced them in that order. So the sound the service plays is the
- * sound the emulator made, in one piece.
+ * The buffer the service is reading is never the one being written to, so
+ * the samples that come out are the samples that went in, in one piece.
+ * A transport with one buffer per ear cannot do that: it would be
+ * writing over the samples the service is reading, and what came out
+ * would be a mixture of two frames of sound.
  *
- * The ring that was here before worked out where the service was in its
- * buffer from the console's clock, which is an assumption about the
- * service's rate. If the assumption is wrong the writer and the service
- * drift apart, and the sound goes to pieces in a way that is very hard
- * to see. Nothing here is timed from the clock, so there is nothing to
- * drift.
+ * Each buffer has a channel of its own, so the address the service is
+ * given for a buffer never changes. The channel that is handed a buffer
+ * is the one that played it a block ago, so it has been idle since and
+ * the service is not asked to stop something in the middle of it.
+ *
+ * Nothing here is worked out from the clock, so nothing here can drift.
  *
  * Two things the original did that are not done here, because they are
  * why the original made no sound at all:
@@ -83,8 +82,13 @@ typedef struct {
     int peakRight;
     int level;             /* how loud the last block was, as a percentage */
     unsigned int channelMask; /* the channels the service handed out      */
+    unsigned int channelsUsed; /* the channels the transport is playing on */
     int channelLeft;       /* the channel each ear is played on            */
     int channelRight;
+    int channelLeftAlt;    /* the ear's second buffer, on a channel of
+                              its own, or -1                              */
+    int channelRightAlt;
+    bool mono;             /* both ears are on one channel                */
     int testToneHz;        /* the test tone's frequency, 0 when there is
                               none                                       */
     int gain;              /* the gain the transport applies               */
@@ -100,8 +104,9 @@ typedef struct {
  */
 typedef struct {
     bool readable;            /* the service could be asked at all        */
-    int active[2];            /* whether each channel is playing          */
-    unsigned int reg[2][3];   /* the channel's own registers, as the
+    int active[2][2];         /* whether each channel is playing:
+                                 [ear][buffer]                           */
+    unsigned int reg[2][2][3];/* the channel's own registers, as the
                                  service has them                        */
 } audio_hardware;
 

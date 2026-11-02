@@ -1,19 +1,22 @@
 /*
  * Does the sound transport hand the sound service the right samples?
  *
- * The transport fills a block with the samples the emulator produced and
- * gives the block to the service when it is full. The blocks follow one
- * another, so the service plays the emulator's samples in one piece.
+ * The transport fills a buffer with the samples the emulator produced and
+ * gives the buffer to the service when it is full. Each ear has two
+ * buffers: one is played while the other is filled, so the samples the
+ * service is reading are never the ones being written.
  *
  * What has to be right:
  *
  *   - the service is told that the console is making a sound at all;
- *   - the block holds the emulator's samples, in order, and the sample
- *     after the last one of a block is the first one of the next;
+ *   - the buffer holds the emulator's samples, in order, and the sample
+ *     after the last one of a buffer is the first one of the next;
  *   - the samples are made louder, because the APU's own output is about
  *     a twentieth of full scale and nothing comes out of a speaker at
  *     that level;
- *   - the block is given to the service when it is full, and not before;
+ *   - the buffer is given to the service when it is full, and not before;
+ *   - the buffer the service is playing is not written to while it is
+ *     being played;
  *   - the test tone replaces the samples, and muting turns the volume
  *     down.
  *
@@ -48,7 +51,7 @@ static void fail(const char* what, long long got, long long expected)
 /* One frame's worth of samples, at the rate the APU produces them. */
 #define FRAME_SAMPLES 836
 
-/* The transport's block is two frames long. */
+/* The transport's buffer is two frames long. */
 #define BLOCK_SAMPLES (FRAME_SAMPLES * 2)
 
 /* The gain the transport applies. */
@@ -91,6 +94,20 @@ static void fillSamples(int base)
     }
 }
 
+/* How many of the first `count` samples of a buffer are not what was
+ * expected. */
+static int countWrong(const s16* buffer, int base, int count)
+{
+    int wrong = 0;
+
+    for (int i = 0; i < count; i++) {
+        if (buffer[i] != scaled(base + i))
+            wrong++;
+    }
+
+    return wrong;
+}
+
 int main(void)
 {
     if (!audio_init()) {
@@ -120,83 +137,98 @@ int main(void)
         fail("the ears have no channel to play on", 0, 1);
 
     /* ---------------------------------------------------------------- */
-    printf("\nA block is given to the service when it is full.\n");
+    printf("\nEach ear has two buffers, and each buffer has a channel of\n"
+           "      its own, so the address never changes.\n");
+
+    if (stats.channelLeftAlt < 0 || stats.channelRightAlt < 0) {
+        printf("FAIL: the ears have only one buffer each, so a buffer that\n"
+               "      is being played has to be written to.\n");
+        failures++;
+    }
+    else {
+        printf("  The left ear is on channels %d and %d, the right on %d and %d.\n",
+               stats.channelLeft, stats.channelLeftAlt, stats.channelRight,
+               stats.channelRightAlt);
+    }
+
+    if (stats.channelLeft == stats.channelLeftAlt ||
+        stats.channelLeft == stats.channelRight ||
+        stats.channelLeftAlt == stats.channelRight ||
+        stats.channelLeftAlt == stats.channelRightAlt ||
+        stats.channelRight == stats.channelRightAlt) {
+        printf("FAIL: two buffers are sharing a channel.\n");
+        failures++;
+    }
+
+    /* ---------------------------------------------------------------- */
+    printf("\nA buffer is given to the service when it is full.\n");
 
     int callsBefore = hostCsndCalls;
 
-    /* One frame: the block is half full and nothing should be sent. */
+    /* One frame: the buffer is half full and nothing should be sent. */
     fillSamples(1000);
     audio_submit(left, right, FRAME_SAMPLES);
     if (hostCsndCalls != callsBefore) {
-        printf("FAIL: the service was given %d blocks for half a block of\n"
+        printf("FAIL: the service was given %d buffers for half a buffer of\n"
                "      samples.\n", hostCsndCalls - callsBefore);
         failures++;
     }
     else {
-        printf("  Half a block: nothing sent.\n");
+        printf("  Half a buffer: nothing sent.\n");
     }
 
-    /* The second frame fills the block. */
+    /* The second frame fills the buffer. */
     fillSamples(2000);
     audio_submit(left, right, FRAME_SAMPLES);
     if (hostCsndCalls != callsBefore + 2) {
-        printf("FAIL: the service was given %d blocks for a full block of\n"
+        printf("FAIL: the service was given %d buffers for a full buffer of\n"
                "      samples; there should have been one for each ear.\n",
                hostCsndCalls - callsBefore);
         failures++;
     }
     else {
-        printf("  A full block: one for each ear.\n");
+        printf("  A full buffer: one for each ear.\n");
     }
 
     audio_get_stats(&stats);
     if (stats.blocks != 1)
-        fail("the wrong number of blocks was sent", (long long)stats.blocks, 1);
+        fail("the wrong number of buffers was sent", (long long)stats.blocks, 1);
     if (stats.blockFrames != BLOCK_SAMPLES)
-        fail("the block is the wrong size", stats.blockFrames, BLOCK_SAMPLES);
+        fail("the buffer is the wrong size", stats.blockFrames, BLOCK_SAMPLES);
 
     /* ---------------------------------------------------------------- */
-    printf("\nThe block holds the emulator's samples, in order.\n");
+    printf("\nThe buffer holds the emulator's samples, in order.\n");
 
     {
-        int chn = hostCsndChn[0];
-        const s16* block = (const s16*)hostCsndData[chn];
+        const s16* buffer = (const s16*)hostCsndData[stats.channelLeft];
 
-        if (!block) {
-            printf("FAIL: the service was never given a block to play.\n");
+        if (!buffer) {
+            printf("FAIL: the service was never given a buffer to play.\n");
             failures++;
         }
         else {
-            int wrong = 0;
-
-            /* The first half of the block is the first frame, made
+            /* The first half of the buffer is the first frame, made
              * louder. */
-            for (int i = 0; i < FRAME_SAMPLES; i++) {
-                if (block[i] != scaled(1000 + i))
-                    wrong++;
-            }
+            int wrong = countWrong(buffer, 1000, FRAME_SAMPLES);
 
             /* The second half is the second frame. */
-            for (int i = 0; i < FRAME_SAMPLES; i++) {
-                if (block[FRAME_SAMPLES + i] != scaled(2000 + i))
-                    wrong++;
-            }
+            wrong += countWrong(buffer + FRAME_SAMPLES, 2000, FRAME_SAMPLES);
 
             if (wrong) {
-                printf("FAIL: %d samples in the block are not the samples\n"
+                printf("FAIL: %d samples in the buffer are not the samples\n"
                        "      the emulator produced.\n", wrong);
                 failures++;
             }
             else {
-                printf("  The block is the emulator's samples, in order.\n");
+                printf("  The buffer is the emulator's samples, in order.\n");
             }
 
-            /* The right ear is a block of its own. */
-            const s16* rblock = (const s16*)hostCsndData[hostCsndChn[1]];
-            if (rblock) {
+            /* The right ear is a buffer of its own. */
+            const s16* rbuffer = (const s16*)hostCsndData[stats.channelRight];
+            if (rbuffer) {
                 int rwrong = 0;
                 for (int i = 0; i < FRAME_SAMPLES; i++) {
-                    if (rblock[i] != scaled(-(1000 + i)))
+                    if (rbuffer[i] != scaled(-(1000 + i)))
                         rwrong++;
                 }
                 if (rwrong) {
@@ -205,7 +237,7 @@ int main(void)
                     failures++;
                 }
                 else {
-                    printf("  The right ear has its own block, with its own\n"
+                    printf("  The right ear has its own buffer, with its own\n"
                            "  samples.\n");
                 }
             }
@@ -218,12 +250,11 @@ int main(void)
     /* The APU's loudest sample is about 1680. At that level nothing comes
      * out of a speaker, so the transport makes the samples louder. */
     {
-        int chn = hostCsndChn[0];
-        const s16* block = (const s16*)hostCsndData[chn];
+        const s16* buffer = (const s16*)hostCsndData[stats.channelLeft];
         int peak = 0;
 
         for (int i = 0; i < BLOCK_SAMPLES; i++) {
-            int v = block[i] < 0 ? -block[i] : block[i];
+            int v = buffer[i] < 0 ? -buffer[i] : buffer[i];
             if (v > peak)
                 peak = v;
         }
@@ -246,35 +277,55 @@ int main(void)
     }
 
     /* ---------------------------------------------------------------- */
-    printf("\nThe blocks follow one another.\n");
+    printf("\nThe buffer the service is playing is not written to.\n");
 
-    /* Two more frames: the block is filled again and sent again, and it
-     * must hold these two frames and not the two before them. */
+    /*
+     * This is the one that matters. Two more frames fill the ear's second
+     * buffer, and that buffer is handed to the service to play. The first
+     * buffer is still being played at that moment, so the first buffer
+     * must still hold the first two frames and not the two that were just
+     * handed over.
+     *
+     * A transport with one buffer per ear cannot pass this: it would be
+     * writing over the samples the service is reading, and what came out
+     * would be a mixture of two frames of sound.
+     */
     {
         fillSamples(3000);
         audio_submit(left, right, FRAME_SAMPLES);
         fillSamples(4000);
         audio_submit(left, right, FRAME_SAMPLES);
 
-        int chn = hostCsndChn[0];
-        const s16* block = (const s16*)hostCsndData[chn];
+        const s16* playing = (const s16*)hostCsndData[stats.channelLeft];
+        const s16* fresh = (const s16*)hostCsndData[stats.channelLeftAlt];
         int wrong = 0;
 
-        for (int i = 0; i < FRAME_SAMPLES; i++) {
-            if (block[i] != scaled(3000 + i))
-                wrong++;
-            if (block[FRAME_SAMPLES + i] != scaled(4000 + i))
-                wrong++;
-        }
-
-        if (wrong) {
-            printf("FAIL: %d samples in the block are not the samples of\n"
-                   "      the frames that were just handed over.\n", wrong);
+        if (!playing || !fresh) {
+            printf("FAIL: the second buffer was never given to the service.\n");
             failures++;
         }
         else {
-            printf("  The block holds the two frames that were just given\n"
-                   "  to it, and not the ones before.\n");
+            /* The buffer that is being played still holds the frames it
+             * was given. */
+            wrong += countWrong(playing, 1000, FRAME_SAMPLES);
+            wrong += countWrong(playing + FRAME_SAMPLES, 2000, FRAME_SAMPLES);
+
+            /* And the new buffer holds the two frames that were just
+             * handed over. */
+            wrong += countWrong(fresh, 3000, FRAME_SAMPLES);
+            wrong += countWrong(fresh + FRAME_SAMPLES, 4000, FRAME_SAMPLES);
+
+            if (wrong) {
+                printf("FAIL: %d samples are not where they should be: the\n"
+                       "      buffer being played was written to, or the new\n"
+                       "      buffer was not filled.\n", wrong);
+                failures++;
+            }
+            else {
+                printf("  The buffer being played was left alone, and the new\n"
+                       "  buffer holds the two frames that were just given to\n"
+                       "  it.\n");
+            }
         }
     }
 
@@ -288,12 +339,13 @@ int main(void)
     audio_submit(left, right, FRAME_SAMPLES);
 
     {
-        int chn = hostCsndChn[0];
-        const s16* block = (const s16*)hostCsndData[chn];
+        /* The buffers take turns, so these two frames went into the first
+         * buffer of the left ear. */
+        const s16* buffer = (const s16*)hostCsndData[stats.channelLeft];
         int peak = 0;
 
         for (int i = 0; i < BLOCK_SAMPLES; i++) {
-            int v = block[i] < 0 ? -block[i] : block[i];
+            int v = buffer[i] < 0 ? -buffer[i] : buffer[i];
             if (v > peak)
                 peak = v;
         }
@@ -317,6 +369,12 @@ int main(void)
 
     {
         int execsBefore = hostCsndExecCount;
+        int channels[4];
+
+        channels[0] = stats.channelLeft;
+        channels[1] = stats.channelLeftAlt;
+        channels[2] = stats.channelRight;
+        channels[3] = stats.channelRightAlt;
 
         audio_set_muted(true);
 
@@ -330,30 +388,30 @@ int main(void)
         }
 
         int muted = 1;
-        for (int ear = 0; ear < 2; ear++) {
-            if (hostCsndVolSet[hostCsndChn[ear]] != 0)
+        for (int i = 0; i < 4; i++) {
+            if (channels[i] >= 0 && hostCsndVolSet[channels[i]] != 0)
                 muted = 0;
         }
         if (muted) {
-            printf("  Both ears were turned down to nothing.\n");
+            printf("  Every channel was turned down to nothing.\n");
         }
         else {
-            printf("FAIL: muting did not turn both ears down.\n");
+            printf("FAIL: muting did not turn every channel down.\n");
             failures++;
         }
 
         audio_set_muted(false);
 
         int restored = 1;
-        for (int ear = 0; ear < 2; ear++) {
-            if (hostCsndVolSet[hostCsndChn[ear]] == 0)
+        for (int i = 0; i < 4; i++) {
+            if (channels[i] >= 0 && hostCsndVolSet[channels[i]] == 0)
                 restored = 0;
         }
         if (restored) {
-            printf("  Both ears were turned back up.\n");
+            printf("  Every channel was turned back up.\n");
         }
         else {
-            printf("FAIL: unmuting did not turn both ears back up.\n");
+            printf("FAIL: unmuting did not turn every channel back up.\n");
             failures++;
         }
     }
@@ -365,7 +423,7 @@ int main(void)
         return 1;
     }
 
-    printf("PASS: the transport handed the service %llu frames in %llu blocks, "
+    printf("PASS: the transport handed the service %llu frames in %llu buffers, "
            "%d frames each, %d ms behind.\n",
            stats.frames, stats.blocks, stats.blockFrames, stats.latencyMs);
     return 0;
