@@ -101,6 +101,11 @@ void gfxPresentGameFrame(void);
 void gfxSetPictureScaled(bool scaled);
 bool gfxPictureScaled(void);
 
+/* Where the picture is on the screen: its left edge, its top edge, and
+ * how big it is. The picture is put on the screen at the end of every
+ * frame, so this says where the last one went. */
+void gfxPictureRect(int *x, int *y, int *width, int *height);
+
 /* Start the frame clock. */
 void gfxInitFrameClock(void);
 

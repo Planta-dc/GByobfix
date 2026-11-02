@@ -130,6 +130,15 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
  */
 static bool pictureScaled = false;
 
+/* Where the picture ended up on the screen, so that the diagnostics can
+ * say. The screen can be looked at, but it cannot be measured from
+ * here, and a picture in the wrong place is the kind of thing that is
+ * worth being able to check. */
+static int pictureX;
+static int pictureY;
+static int pictureWidth;
+static int pictureHeight;
+
 void gfxSetPictureScaled(bool scaled)
 {
     pictureScaled = scaled;
@@ -138,6 +147,14 @@ void gfxSetPictureScaled(bool scaled)
 bool gfxPictureScaled(void)
 {
     return pictureScaled;
+}
+
+void gfxPictureRect(int *x, int *y, int *width, int *height)
+{
+    if (x) *x = pictureX;
+    if (y) *y = pictureY;
+    if (width) *width = pictureWidth;
+    if (height) *height = pictureHeight;
 }
 
 void gfxPresentGameFrame(void) {
@@ -176,21 +193,24 @@ void gfxPresentGameFrame(void) {
     int scaledWidth = (GB_WIDTH * num) / den;
     int scaledHeight = (GB_HEIGHT * num) / den;
 
+    pictureX = (width - scaledWidth) / 2;
+    pictureY = (height - scaledHeight) / 2;
+    pictureWidth = scaledWidth;
+    pictureHeight = scaledHeight;
+
     /* The framebuffers are doubled, and each one holds the picture from
      * two frames ago. The picture does not cover the whole screen, so
      * without this the area around it would show the old picture. */
     gfxClearScreenFrame();
 
     gfxBlitGameFrame(framebuffer, width, height, gameFrame,
-                     (width - scaledWidth) / 2, (height - scaledHeight) / 2,
-                     num, den);
+                     pictureX, pictureY, num, den);
 
     /* The status strip, drawn over the top of the picture. It is drawn
      * into the framebuffer the picture was just drawn into, so it cannot
      * fall behind the picture. */
     hudDraw((u16 *)framebuffer, width, height,
-            (width - scaledWidth) / 2, (height - scaledHeight) / 2,
-            scaledWidth, scaledHeight);
+            pictureX, pictureY, pictureWidth, pictureHeight);
 
     /* The display controller reads the framebuffer over the bus, and the
      * processor's copy of it is in its cache, so what was drawn has to be

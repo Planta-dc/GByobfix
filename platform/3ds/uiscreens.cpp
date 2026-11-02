@@ -18,7 +18,7 @@
 #define CONTENT_W (UI_W - 2 * MARGIN)
 
 /* How many lines the diagnostics panel shows. */
-#define DIAG_PANEL_ROWS 12
+#define DIAG_PANEL_ROWS 13
 
 
 /* ------------------------------------------------------------------------- */
