@@ -73,6 +73,11 @@ int main(int argc, char* argv[])
      * on, for the same reason. */
     hudSetEnabled(getMenuOption("Status Strip") != 0);
 
+    /* The size of the picture. The original port drew it at its own size
+     * in the middle of the screen, and that is what the setting says
+     * when it has never been changed. */
+    gfxSetPictureScaled(getMenuOption("Picture Size") != 0);
+
     /* The interface says the name of the program in the header of the
      * file browser, so there is nothing to print here. */
     mgr_selectRom();

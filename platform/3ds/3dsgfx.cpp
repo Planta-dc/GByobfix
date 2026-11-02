@@ -115,6 +115,31 @@ void gfxBlitGameFrame(u8* dest, int destWidth, int destHeight,
     }
 }
 
+/*
+ * Whether the picture is scaled up to fill the screen.
+ *
+ * The original port drew the Game Boy's picture at its own size in the
+ * middle of the top screen: a hundred and sixty by a hundred and
+ * forty-four pixels, with black either side of it. That is the default
+ * here, because it is what the original did, and because a picture made
+ * of squares that are not square on the screen is not the picture the
+ * Game Boy drew.
+ *
+ * The scaled picture is still there, for the screens that are too small
+ * for a hundred and sixty pixels to be worth looking at.
+ */
+static bool pictureScaled = false;
+
+void gfxSetPictureScaled(bool scaled)
+{
+    pictureScaled = scaled;
+}
+
+bool gfxPictureScaled(void)
+{
+    return pictureScaled;
+}
+
 void gfxPresentGameFrame(void) {
     u16 fbWidth = 0, fbHeight = 0;
     u8* framebuffer = gameFramebuffer(&fbWidth, &fbHeight);
@@ -127,17 +152,25 @@ void gfxPresentGameFrame(void) {
     int width = fbHeight;
     int height = fbWidth;
 
-    /* The picture is scaled to fit the screen and keeps its shape. The
-     * Game Boy's screen is ten by nine and the console's is five by
-     * three, so on the top screen it is the height that is filled and
-     * the width that is left over. */
     int num, den;
-    if (GB_WIDTH * height <= width * GB_HEIGHT) {
-        num = height;
-        den = GB_HEIGHT;
-    } else {
-        num = width;
-        den = GB_WIDTH;
+    if (pictureScaled) {
+        /* The picture is scaled to fit the screen and keeps its shape.
+         * The Game Boy's screen is ten by nine and the console's is five
+         * by three, so on the top screen it is the height that is filled
+         * and the width that is left over. */
+        if (GB_WIDTH * height <= width * GB_HEIGHT) {
+            num = height;
+            den = GB_HEIGHT;
+        } else {
+            num = width;
+            den = GB_WIDTH;
+        }
+    }
+    else {
+        /* The original: the picture at its own size, in the middle of
+         * the screen. */
+        num = 1;
+        den = 1;
     }
 
     int scaledWidth = (GB_WIDTH * num) / den;

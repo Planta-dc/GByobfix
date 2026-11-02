@@ -98,8 +98,7 @@ static int drawText(const ui_font *f, int x, int y, const char *s, u16 c)
  * worst frame of the last second.
  *
  * The second line is the sound: how loud the last block was, how loud the
- * loudest sample in it was, how far ahead of the speaker the transport
- * is, and how many times it has run dry or thrown something away.
+ * loudest sample in it was, and how big a block is.
  */
 void hudDraw(u16 *dest, int destWidth, int destHeight, int x, int y,
              int width, int height)
@@ -122,16 +121,29 @@ void hudDraw(u16 *dest, int destWidth, int destHeight, int x, int y,
 
     stripH = (height < HUD_H) ? height : HUD_H;
 
+    /*
+     * Where the strip goes.
+     *
+     * The picture at its own size is a hundred and forty four pixels
+     * high in a screen of two hundred and forty, so there is room above
+     * it, and the strip goes there rather than over the game. When the
+     * picture fills the screen there is no room, and the strip is drawn
+     * over the top of it, which is the price of it.
+     */
+    if (y >= HUD_H)
+        y -= HUD_H;
+
     diagGetFrameStats(&frames);
     audio_get_stats(&audio);
 
     snprintf(rate, sizeof rate, "%4.1f", (double)frames.fps);
     snprintf(rest, sizeof rest, "fps %4.1fms W%4.1f",
              (double)frames.avgUs / 1000.0, (double)frames.worstUs / 1000.0);
-    snprintf(sound, sizeof sound, "snd %d%% pk%d fill%d u%llu d%llu",
-             audio.level, audio.peak, audio.fillFrames,
-             (unsigned long long)audio.underruns,
-             (unsigned long long)audio.drops);
+    /* The picture can be as narrow as a hundred and sixty pixels, which
+     * is about twenty five characters of this font, so the line is kept
+     * short. */
+    snprintf(sound, sizeof sound, "snd %d%% pk%d blk%d",
+             audio.level, audio.peak, audio.blockFrames);
 
     /* The background. The strip covers the picture rather than being
      * blended into it, so that the numbers are always readable over

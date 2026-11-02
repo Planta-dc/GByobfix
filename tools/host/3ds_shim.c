@@ -194,6 +194,94 @@ void CSND_SetPlayState(u32 channel, u32 value)
  * worth remembering that it was thrown. */
 int hostCsndPlaybackOn;
 
+/*
+ * The addresses the transport has asked for.
+ *
+ * The service wants a physical address, which is thirty two bits, and a
+ * pointer on a development machine does not fit in that. So the pointers
+ * are kept here and the transport is given a number that stands for one.
+ * There are only ever a handful of them: the blocks the transport fills.
+ */
+#define HOST_ADDRESS_TABLE 64
+static void* hostAddresses[HOST_ADDRESS_TABLE];
+static int hostAddressCount;
+
+u32 osConvertVirtToPhys(void* ptr)
+{
+    for (int i = 0; i < hostAddressCount; i++) {
+        if (hostAddresses[i] == ptr)
+            return (u32)(i + 1);
+    }
+
+    if (hostAddressCount >= HOST_ADDRESS_TABLE)
+        return 0;
+
+    hostAddresses[hostAddressCount] = ptr;
+    return (u32)(hostAddressCount++ + 1);
+}
+
+static void* hostAddress(u32 address)
+{
+    if (address == 0 || address > (u32)hostAddressCount)
+        return NULL;
+    return hostAddresses[address - 1];
+}
+
+/*
+ * Setting a channel up.
+ *
+ * The transport does this itself rather than going through
+ * csndPlaySound(), so that the commands for both ears can be sent in one
+ * go and the frame is not held up waiting for the service.
+ *
+ * The flags carry the channel and the timer, and the timer is what the
+ * rate was turned into, so the rate can be worked back out. The volume
+ * is a pair of numbers, one for each speaker, and the pan is what those
+ * two say about each other.
+ */
+void CSND_SetChnRegs(u32 flags, u32 physaddr0, u32 physaddr1, u32 totalbytesize,
+                     u32 chnVolumes, u32 capVolumes)
+{
+    (void)physaddr1;
+    (void)capVolumes;
+
+    u32 channel = flags & 0x1F;
+    if (channel >= 32)
+        return;
+
+    u32 timer = (flags >> 16) & 0xFFFF;
+    float left = (chnVolumes & 0xFFFF) / 32768.0f;
+    float right = (chnVolumes >> 16) / 32768.0f;
+    float sum = left + right;
+
+    hostCsndFlags[channel] = flags;
+    hostCsndData[channel] = hostAddress(physaddr0);
+    hostCsndSize[channel] = totalbytesize;
+    hostCsndVolSet[channel] = chnVolumes;
+    hostCsndRate[channel] = timer ? (0x3FEC3FC / timer) : 0;
+    /* The volume of a channel is a pair of numbers, one for each
+     * speaker, and the loudest of the two is how loud the channel is.
+     * The pan is what the two say about each other. */
+    hostCsndVol[channel] = left > right ? left : right;
+    hostCsndPan[channel] = sum > 0.0f ? (right - left) / sum : 0.0f;
+
+    /* The channels that were set up, in the order they were set up, so
+     * that a test can find the ear it wants without having to know which
+     * channel number the port chose. */
+    int seen = 0;
+    for (int i = 0; i < hostCsndChnCount && i < 8; i++) {
+        if (hostCsndChn[i] == (int)channel)
+            seen = 1;
+    }
+    if (!seen) {
+        if (hostCsndChnCount < 8)
+            hostCsndChn[hostCsndChnCount] = (int)channel;
+        hostCsndChnCount++;
+    }
+
+    hostCsndCalls++;
+}
+
 void CSND_SetPlayStateR(u32 channel, u32 value)
 {
     (void)channel;

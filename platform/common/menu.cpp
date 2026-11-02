@@ -24,6 +24,7 @@
 #include "audio.h"
 #include "diag.h"
 #include "hud.h"
+#include "3dsgfx.h"
 #endif
 
 const int MENU_DS   = 1;
@@ -298,6 +299,22 @@ void hudEnableFunc(int value) {
     (void)value;
 }
 
+/*
+ * The size of the picture on the top screen.
+ *
+ * The original port drew the Game Boy's picture at its own size in the
+ * middle of the screen. The scaled picture is for the screens where a
+ * hundred and sixty pixels across is too small to be worth looking at.
+ */
+void pictureSizeFunc(int value) {
+#ifdef _3DS
+    gfxSetPictureScaled(value != 0);
+    diagLogUrgent("picture %s\n", value ? "scaled" : "original");
+    return;
+#endif
+    (void)value;
+}
+
 void customBorderEnableFunc(int value) {
     customBordersEnabled = value;
     checkBorder();
@@ -536,7 +553,7 @@ SubMenu menuList[] = {
     },
     {
         "Display",
-        8,
+        9,
         {
             {"Game Screen", setScreenFunc, 2, {"Top","Bottom"}, 0, MENU_ALL},
             {"Single Screen", setSingleScreenFunc, 2, {"Off","On"}, 0, MENU_ALL},
@@ -545,7 +562,8 @@ SubMenu menuList[] = {
             {"SGB Borders", sgbBorderEnableFunc, 2, {"Off","On"}, 1, MENU_ALL},
             {"Custom Border", customBorderEnableFunc, 2, {"Off","On"}, 1, MENU_ALL},
             {"Select Border", (void (*)(int))selectBorder, 0, {}, 0, MENU_ALL},
-            {"Status Strip", hudEnableFunc, 2, {"Off","On"}, 1, MENU_3DS}
+            {"Status Strip", hudEnableFunc, 2, {"Off","On"}, 1, MENU_3DS},
+            {"Picture Size", pictureSizeFunc, 2, {"Original","Scaled"}, 0, MENU_3DS}
         }
     },
     {

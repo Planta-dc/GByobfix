@@ -347,12 +347,11 @@ void diagTick(void)
         audio_get_stats(&stats);
 
         diagLog("%6llu f  %5u us  late %u  |  sound %s  ch %d/%d  "
-                "fill %d (%d ms)  peak %d  level %d%%  under %llu  drop %llu\n",
+                "blk %d (%d ms)  peak %d  level %d%%  gain %d\n",
                 (unsigned long long)frameCount, avgPeriodUs, lateFrames,
                 stats.running ? "on" : "off", stats.channelLeft,
-                stats.channelRight, stats.fillFrames, stats.latencyMs,
-                stats.peak, stats.level, (unsigned long long)stats.underruns,
-                (unsigned long long)stats.drops);
+                stats.channelRight, stats.blockFrames, stats.latencyMs,
+                stats.peak, stats.level, stats.gain);
     }
 }
 
@@ -397,14 +396,12 @@ void diagDump(void)
     APPEND("channel mask %08x  left %d  right %d\n", stats.channelMask,
            stats.channelLeft, stats.channelRight);
     APPEND("test tone %d Hz\n", stats.testToneHz);
-    APPEND("ring %d frames  %d ms\n", stats.fillFrames, stats.latencyMs);
+    APPEND("block %d frames  %d ms\n", stats.blockFrames, stats.latencyMs);
     APPEND("peak %d  left %d  right %d  level %d%%\n", stats.peak,
            stats.peakLeft, stats.peakRight, stats.level);
-    APPEND("frames %llu  underruns %llu  drops %llu  corrections %llu\n",
+    APPEND("frames %llu  blocks %llu  gain %d\n",
            (unsigned long long)stats.frames,
-           (unsigned long long)stats.underruns,
-           (unsigned long long)stats.drops,
-           (unsigned long long)stats.corrections);
+           (unsigned long long)stats.blocks, stats.gain);
 
     if (fresh.readable) {
         for (int ear = 0; ear < 2; ear++) {
@@ -469,18 +466,16 @@ const char *const *diagLines(int *count)
              hardware.reg[0][0], hardware.reg[1][0]);
     n++;
 
-    snprintf(lineText[n], sizeof lineText[n], "ring     %d frames  %d ms",
-             stats.fillFrames, stats.latencyMs);
+    snprintf(lineText[n], sizeof lineText[n], "block    %d frames  %d ms",
+             stats.blockFrames, stats.latencyMs);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "level    %d%%  peak %d",
              stats.level, stats.peak);
     n++;
 
-    snprintf(lineText[n], sizeof lineText[n], "under %llu  drop %llu  corr %llu",
-             (unsigned long long)stats.underruns,
-             (unsigned long long)stats.drops,
-             (unsigned long long)stats.corrections);
+    snprintf(lineText[n], sizeof lineText[n], "blocks   %llu  gain %d",
+             (unsigned long long)stats.blocks, stats.gain);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "frames   %llu",

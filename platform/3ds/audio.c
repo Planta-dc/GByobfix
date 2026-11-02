@@ -1,11 +1,53 @@
 /*
- * The sound transport. See audio.h for what this is and what it is not.
+ * The sound transport: GameYob's APU to the 3DS sound service.
  *
- * The service is asked to loop over a ring of samples, once for each ear.
- * The emulator writes into the ring ahead of the position the service has
- * reached, which is worked out from the clock.
+ * What this is, and what it is not
+ * -------------------------------
+ * This is a routing and timing layer. It takes the samples GameYob's own
+ * APU produces and hands them to the sound service at the rate the service
+ * expects, so that what comes out of the speaker is what the APU computed
+ * and nothing is lost on the way.
+ *
+ * It is not a sample accurate emulation of the Game Boy's sound hardware.
+ * The APU that produces the samples is GameYob's, unchanged; the part that
+ * is played is still a simplification of the real thing (the duty cycle
+ * edges are quantised to the sampling interval, for instance). This file
+ * does not make any of that better, and it does not pretend to: it moves
+ * samples from one place to another without losing them.
+ *
+ * The design
+ * ----------
+ * This is the original port's design, which is simpler than the ring that
+ * was here before it and does not depend on the clock:
+ *
+ *   - the sound is handed over in blocks, one block for each ear;
+ *   - when a block is full it is given to the service to play, and the
+ *     service is told to play it once;
+ *   - the next block is filled while that one is playing, and is given
+ *     to the service when it is full.
+ *
+ * The blocks follow one another without a gap: the sample after the last
+ * one of a block is the first one of the next, because the emulator
+ * produced them in that order. So the sound the service plays is the
+ * sound the emulator made, in one piece.
+ *
+ * The ring that was here before worked out where the service was in its
+ * buffer from the console's clock, which is an assumption about the
+ * service's rate. If the assumption is wrong the writer and the service
+ * drift apart, and the sound goes to pieces in a way that is very hard
+ * to see. Nothing here is timed from the clock, so there is nothing to
+ * drift.
+ *
+ * Two things the original did that are not done here, because they are
+ * why the original made no sound at all:
+ *
+ *   - it never told the service that the console was making a sound.
+ *     The command was written out and never called it. The service will
+ *     sit on a channel that is set up perfectly and say nothing;
+ *   - it played its samples on channels eight and nine, which are the
+ *     tone and noise channels. The samples go on the channels below
+ *     eight, which are the ones that play recorded sound.
  */
-
 #include <3ds.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,107 +58,83 @@
 
 #include "audio.h"
 
-/* The service plays one sample per channel, so the two ears go to two
- * channels. */
+/*
+ * The rate everything below runs at.
+ *
+ * GameYob's APU is sampled every 84 Game Boy cycles, which is 49932.57 Hz.
+ * The sound service takes an integer rate, and 49932 is the closest one to
+ * it. The difference is 11 parts per million, which is under half a
+ * sample over a block.
+ */
+#define AUDIO_RATE 49932u
+
+/* Samples the APU produces in one Game Boy frame: 70224 cycles / 84. */
+#define AUDIO_FRAMES_PER_GB_FRAME 836
+
+/* The two ears of the Game Boy's stereo output. */
 #define AUDIO_EARS 2
 
-/* Where each ear's channel is played.
- *
- * The service is given a volume and a pan, and the pan is what decides
- * which speaker a channel comes out of: -1 is all the way to the left
- * and +1 all the way to the right.
- *
- * A pan of 0, which is the middle, is not the same as "straight
- * ahead". The service turns a volume and a pan into a pair of volumes,
- * one for each speaker, so a pan of 0 gives each speaker half of the
- * volume. A channel played with a pan of 0 comes out of both ears at
- * half the volume, and with a channel for each ear that means both ears
- * hear a mixture of the two at half the volume: mono, and quiet.
- */
+/* The pan each ear's channel is played at: all the way over. */
 #define AUDIO_PAN_LEFT (-1.0f)
 #define AUDIO_PAN_RIGHT (1.0f)
 
-/* The channels to try. The service hands out the channels an
- * application may use, and a channel it has not handed out cannot be
- * played on: csndPlaySound says so and does nothing. Rather than guess
- * which ones are free, the ones the service handed out are looked at.
+/*
+ * The size of a block, in frames.
  *
- * The channels below eight are the ones that play recorded sound; the
- * ones above are the tone and noise channels. The sound here is
- * recorded, so the lower ones are preferred, but the service may hand
- * out only the upper ones, and then those are used.
+ * The original used eight, which is 134 ms of delay between the game and
+ * the speaker - the sound would be a seventh of a second behind the
+ * picture. Two frames is 33 ms: long enough that the service is not
+ * being restarted every frame, short enough that the sound is with the
+ * picture.
  */
+#define AUDIO_BLOCK_FRAMES 2
+
+/* The samples in a block. */
+#define AUDIO_BLOCK_SAMPLES (AUDIO_FRAMES_PER_GB_FRAME * AUDIO_BLOCK_FRAMES)
+
+/*
+ * The gain.
+ *
+ * The APU's own output is small: its loudest sample is about 1680, which
+ * is a twentieth of full scale, and at that level nothing comes out of a
+ * 3DS's speaker. So the samples are made louder on the way to the
+ * service.
+ *
+ * The APU is not changed: this is the transport's gain, and the APU
+ * computes exactly what it always computed. Eight times puts the loudest
+ * sample at about two fifths of full scale, which is loud enough to hear
+ * and quiet enough not to hurt.
+ */
+#define AUDIO_GAIN 8
+
+/* The channels to try. The service hands out which channels an
+ * application may use; the ones below eight are the ones that play
+ * recorded sound, and the ones above are the tone and noise channels. */
 #define AUDIO_CHANNEL_FIRST 0
 #define AUDIO_CHANNEL_LAST 16
 
-/* How much audio is kept in flight. At 49932 Hz, 8192 frames are 164 ms. */
-#define AUDIO_RING_FRAMES 8192
+/* The volume each ear's channel is played at, so that muting and
+ * unmuting can put back exactly what was there before. */
+static u32 earVolume[AUDIO_EARS];
 
-/* How far ahead of the service the emulator writes.
- *
- * The lower bound is the latency of the sound: the service is always that
- * many frames behind what the emulator has produced. The upper bound is
- * how close the writer may get to the samples the service has not played
- * yet before it has to start dropping them.
- *
- * The band between them is 6 thousand frames, which is 125 ms. A
- * difference between the console's clock and the sound service's clock of
- * one part in a hundred thousand moves the write position by half a frame
- * a second, so the band is not going to be left often. */
-#define AUDIO_FILL_MIN 1024
-#define AUDIO_FILL_MAX (AUDIO_RING_FRAMES - 1024)
-
-/* The ring holds the samples the service loops over. The loop does not
- * start at the beginning of the buffer: the service plays the buffer
- * once from the start before it starts looping, so the loop has to be
- * inside the buffer it plays first.
- *
- * The loop starts two frames in, which puts the address the service is
- * given for it on a four byte boundary. The service reads the samples
- * over the bus, and the bus reads them a word at a time, so an address
- * that is not a multiple of four is an address the service may not be
- * able to read at all.
- */
-#define AUDIO_LOOP_OFFSET_FRAMES 2
-
-/* The buffer holds the ring and the frames in front of it that the loop
- * starts in. */
-#define AUDIO_BUFFER_FRAMES (AUDIO_RING_FRAMES + AUDIO_LOOP_OFFSET_FRAMES)
-
-/* The rate the service will really play at.
- *
- * The service is told a rate and turns it into a timer, and the timer is
- * a whole number of ticks, so the rate it plays at is not the rate that
- * was asked for. Asking for 49932 Hz gives a timer of 1342, and
- * 67027964 ticks a second divided by 1342 is 49946 Hz.
- *
- * The transport works out where the service has got to from the console's
- * clock, so it has to use the rate the service really plays at. Using
- * the rate that was asked for makes the two drift apart at about
- * fourteen frames a second, which is nothing to begin with and then,
- * after about seven minutes, the writer catches up with the samples the
- * service has not played yet and starts throwing them away.
- *
- * The rate is kept as the fraction the hardware actually uses, so that
- * there is no rounding error either.
- */
-#define AUDIO_RATE_NUM CSND_TIMER(1)
-#define AUDIO_RATE_DEN CSND_TIMER(AUDIO_RATE)
-
-static s16* ring[AUDIO_EARS];
+/* The block each ear is being filled, and how far into it the samples
+ * have gone. */
+static s16* block[AUDIO_EARS];
 static int channel[AUDIO_EARS];
-static bool running;
-static bool muted;
+static unsigned fillPos[AUDIO_EARS];
 
-/* The loudest sample handed over in the last block. It says whether the
- * APU is making a sound at all, which is worth knowing when the speaker
- * says nothing. */
+/* The sample rate, as the service wants it: a timer value, not a rate. */
+static u32 blockTimer;
+
+/* Whether the emulator has handed samples over since the last time the
+ * test tone was pumped. */
+static bool submitted;
+
+/* The loudest sample handed over in the last block, and how loud the last
+ * block was as a percentage of full scale. The peak on its own says
+ * whether there was a sound; the level says how much of one there was,
+ * which is the difference between a quiet game and a silent one. */
 static int lastPeak;
-
-/* The same, for each ear, and how loud the block was as a percentage of
- * full scale. The peak on its own says whether there was a sound; the
- * level says how much of one there was, which is the difference between a
- * quiet game and a silent one. */
 static int lastPeakLeft;
 static int lastPeakRight;
 static int lastLevel;
@@ -148,26 +166,6 @@ static u32 integerRoot(u64 value)
     return (u32)(root >> 1);
 }
 
-/* The volume each ear's channel is played at, so that muting and
- * unmuting can put back exactly what was there before. */
-static u32 earVolume[AUDIO_EARS];
-
-/* Frames the emulator has written into the ring. */
-static u64 written;
-
-/* The clock at which the service was told to play. */
-static u64 playStart;
-
-/* The last sample written, so that the transport can repeat it when the
- * emulator falls behind. */
-static s16 lastLeft;
-static s16 lastRight;
-
-static unsigned long long statFrames;
-static unsigned long long statUnderruns;
-static unsigned long long statDrops;
-static unsigned long long statCorrections;
-
 /*
  * The test tone.
  *
@@ -184,12 +182,6 @@ static unsigned long long statCorrections;
 static int testToneHz;
 static u32 testToneStep; /* the phase step per sample, in 1/65536 of a cycle */
 static u32 testTonePhase;
-
-/* How many blocks have been handed over, and how many had been by the last
- * time the tone was pumped. They are what tells the pump that the tone has
- * already been written this frame. */
-static u64 submitCount;
-static u64 pumpedCount;
 
 /* A quarter of a sine wave, in sixty four steps. The rest of the wave is
  * made out of this by mirroring it, so there is no maths in the frame
@@ -227,35 +219,48 @@ static s16 toneSample(void)
     return value;
 }
 
-/*
- * How many frames the service has played.
- *
- * The service is told to play at AUDIO_RATE, and the console's clock says
- * how long it has been playing, so the position follows from the two. The
- * service's own clock is not exactly the console's clock, and the rate it
- * plays at is not exactly the rate that was asked for, so the rate it
- * really plays at is used here. See AUDIO_RATE_NUM above.
- */
-static u64 readPosition(void)
-{
-    u64 elapsed = svcGetSystemTick() - playStart;
-    u64 seconds = elapsed / SYSCLOCK_ARM11;
-    u64 rest = elapsed % SYSCLOCK_ARM11;
+static bool running;
+static bool muted;
 
-    return seconds * AUDIO_RATE_NUM / AUDIO_RATE_DEN +
-           (rest * AUDIO_RATE_NUM) / (AUDIO_RATE_DEN * (u64)SYSCLOCK_ARM11);
+/* Frames the emulator has handed over. */
+static unsigned long long statFrames;
+
+/* The blocks that have been given to the service. */
+static unsigned long long statBlocks;
+
+/*
+ * The flags for the channel: sixteen bit samples, played once, on this
+ * channel, at the sample rate.
+ *
+ * The repeat mode is in bits eleven and ten: two is one shot, which plays
+ * the block and stops. That is what the original port did, and it is what
+ * makes the blocks follow one another.
+ */
+static u32 channelFlags(int chn)
+{
+    return SOUND_FORMAT_16BIT | SOUND_ONE_SHOT | SOUND_ENABLE |
+           SOUND_CHANNEL(chn) | (blockTimer << 16);
 }
 
 /*
- * Where in the buffer the sample for a position goes.
+ * Give the service a block to play.
  *
- * The ring is the loop the service is given, and it sits at the end of the
- * buffer: the frames in front of it are the ones the service plays once
- * before it starts looping.
+ * The command is written into the service's queue and sent when the queue
+ * is executed. The queue is not waited for: the block is 33 ms long and
+ * it is given to the service 33 ms before the one before it ends, so
+ * there is plenty of time, and waiting would stall the frame.
  */
-static u64 bufferIndex(u64 position)
+static void playBlock(int ear)
 {
-    return AUDIO_LOOP_OFFSET_FRAMES + (position % AUDIO_RING_FRAMES);
+    if (channel[ear] < 0)
+        return;
+
+    u32 address = (u32)osConvertVirtToPhys(block[ear]);
+
+    CSND_SetChnRegs(channelFlags(channel[ear]),
+                     address, address,
+                     AUDIO_BLOCK_SAMPLES * sizeof(s16),
+                     earVolume[ear], 0);
 }
 
 bool audio_init(void)
@@ -266,44 +271,43 @@ bool audio_init(void)
     if (csndInit() != 0)
         return false;
 
+    blockTimer = CSND_TIMER(AUDIO_RATE);
+    if (blockTimer < 0x42)
+        blockTimer = 0x42;
+    else if (blockTimer > 0xFFFF)
+        blockTimer = 0xFFFF;
+
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        ring[ear] = linearAlloc(AUDIO_BUFFER_FRAMES * sizeof(s16));
-        if (!ring[ear]) {
+        block[ear] = linearAlloc(AUDIO_BLOCK_SAMPLES * sizeof(s16));
+        if (!block[ear]) {
             audio_exit();
             return false;
         }
-        memset(ring[ear], 0, AUDIO_BUFFER_FRAMES * sizeof(s16));
+        memset(block[ear], 0, AUDIO_BLOCK_SAMPLES * sizeof(s16));
         channel[ear] = -1;
+        fillPos[ear] = 0;
     }
 
-    /* The service reads the ring over the bus, so it has to be told that
-     * the ring is empty and not holding whatever was in memory before. */
+    /* The service reads the block over the bus, so it has to be told that
+     * it is empty and not holding whatever was in memory before. */
     for (int ear = 0; ear < AUDIO_EARS; ear++)
-        CSND_FlushDataCache(ring[ear], AUDIO_BUFFER_FRAMES * sizeof(s16));
+        CSND_FlushDataCache(block[ear], AUDIO_BLOCK_SAMPLES * sizeof(s16));
 
     /* The service has a switch that says whether the console is making
      * any sound at all. Nothing turns it on by itself: a channel can be
      * set up, given its samples and be playing perfectly well, and the
      * service will sit on it and say nothing.
      *
-     * csndPlaySound() does not throw the switch. The upstream port had
-     * the command written out and never called it, which is the most
-     * likely reason nothing ever came out of the speaker. */
+     * The original port had this command written out and never called it,
+     * which is the most likely reason nothing ever came out of the
+     * speaker. */
     CSND_SetPlayStateR(0, 1);
     csndExecCmds(true);
 
-    /* The service plays the buffer from the start once and then loops
-     * from the loop point onwards, so the ring is the loop and the frames
-     * in front of it are the ones that are played first.
-     *
-     * Each ear gets its own channel, panned to its own side. The service
-     * is given a volume and a pan and works out a volume for each speaker
-     * from them, so the pan has to be all the way over for the ear to get
-     * the whole of the signal.
-     *
-     * The channels are taken from the ones the service handed out, in
+    /* The channels are taken from the ones the service handed out, in
      * order, because the service decides which ones an application may
-     * use and a channel it has not handed out cannot be played on. */
+     * use and a channel it has not handed out cannot be played on. One
+     * for each ear, panned to its own side. */
     int next = 0;
     for (int chn = AUDIO_CHANNEL_FIRST; chn <= AUDIO_CHANNEL_LAST && next < AUDIO_EARS; chn++) {
         if (!(csndChannels & (1u << chn)))
@@ -312,29 +316,30 @@ bool audio_init(void)
         int ear = next;
         float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
 
-        Result r = csndPlaySound(chn,
-                                  SOUND_REPEAT | SOUND_FORMAT_16BIT | SOUND_ENABLE,
-                                  AUDIO_RATE, 1.0f, pan,
-                                  ring[ear], ring[ear] + AUDIO_LOOP_OFFSET_FRAMES,
-                                  AUDIO_BUFFER_FRAMES * sizeof(s16));
-        if (R_FAILED(r))
-            continue;
-
         channel[ear] = chn;
         earVolume[ear] = CSND_VOL(1.0f, pan);
         next++;
     }
 
+    if (next == 0) {
+        /* The service handed out no channels at all. There is nothing to
+         * play on. */
+        audio_exit();
+        return false;
+    }
+
     if (next < AUDIO_EARS) {
         /* Only one channel. That is mono, and it is better than nothing:
-         * the left ear is played and the right one is not. */
-        if (next == 0) {
-            audio_exit();
-            return false;
-        }
-
+         * the two ears are mixed into it. */
         channel[1] = -1;
     }
+
+    /* The channels are set up to play the first block, which is empty
+     * until the emulator has produced something. */
+    for (int ear = 0; ear < AUDIO_EARS; ear++)
+        playBlock(ear);
+
+    csndExecCmds(true);
 
     /* What the service was given, so that a report of "there is no sound"
      * says something more than "there is no sound". The console is thirty
@@ -342,18 +347,9 @@ bool audio_init(void)
     printf("sound: channels %08x\n", (unsigned)csndChannels);
     printf("playing on %d and %d\n", channel[0], channel[1]);
 
-    playStart = svcGetSystemTick();
-    /* The writer starts a little way ahead of the service, so that the
-     * service has something to play straight away. The ring is full of
-     * silence at this point. */
-    written = AUDIO_FILL_MIN;
-    lastLeft = 0;
-    lastRight = 0;
-
     statFrames = 0;
-    statUnderruns = 0;
-    statDrops = 0;
-    statCorrections = 0;
+    statBlocks = 0;
+    submitted = false;
 
     running = true;
     return true;
@@ -361,30 +357,26 @@ bool audio_init(void)
 
 void audio_exit(void)
 {
-    if (!running && !ring[0])
-        return;
-
     bool started = false;
 
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        if (ring[ear]) {
+        if (block[ear]) {
             if (channel[ear] >= 0) {
+                /* Command one: this stops the channel playing. It is not
+                 * the same as the switch above, which stops everything
+                 * and throws the channel's registers away. */
                 CSND_SetPlayState(channel[ear], 0);
                 started = true;
             }
-            linearFree(ring[ear]);
-            ring[ear] = NULL;
+            linearFree(block[ear]);
+            block[ear] = NULL;
         }
         channel[ear] = -1;
     }
 
     /* The commands above are only written into the service's queue.
      * They are not sent until the queue is executed, and without this
-     * the service keeps playing the ring that has just been freed.
-     *
-     * This has to happen even when the transport never started properly,
-     * because a channel that was started and then not stopped goes on
-     * playing a buffer that is no longer there. */
+     * the service keeps playing the block that has just been freed. */
     if (started)
         csndExecCmds(true);
 
@@ -402,7 +394,14 @@ void audio_set_muted(bool newMuted)
         for (int ear = 0; ear < AUDIO_EARS; ear++) {
             if (channel[ear] < 0)
                 continue;
-            CSND_SetVol(channel[ear], muted ? 0 : earVolume[ear], 0);
+
+            float pan = (ear == 0) ? AUDIO_PAN_LEFT : AUDIO_PAN_RIGHT;
+            earVolume[ear] = muted ? 0 : CSND_VOL(1.0f, pan);
+
+            /* Command nine: this changes the volume without touching
+             * where the channel is playing, so the block that is playing
+             * now goes quiet as well. */
+            CSND_SetVol(channel[ear], earVolume[ear], 0);
         }
 
         /* Same again: the volume change is queued, and it only reaches
@@ -417,168 +416,149 @@ bool audio_is_muted(void)
 }
 
 /*
- * Hand a block of samples to the ring.
+ * Hand a block of stereo samples to the transport.
  *
- * This is where the transport's bookkeeping happens: how far ahead of the
- * service the writer is, and what to do when the writer is too far ahead
- * or too far behind. The test tone goes through the same path, because
- * the point of it is to show what the transport does, not to go around it.
+ * The samples go into the block that is being filled, made louder on the
+ * way. When the block is full it is given to the service to play and the
+ * next one is started.
  */
-static void transportWrite(const int16_t* left, const int16_t* right,
-                           unsigned frames, bool tone)
+static void transportWrite(const int16_t* left, const int16_t* right, unsigned frames)
 {
     if (!running)
         return;
 
-    u64 read = readPosition();
-
-    /* How far ahead of the service the writer is, in frames. This is the
-     * latency of the sound: the service is that many frames behind what
-     * the emulator has produced. */
-    s64 fill = (s64)(written - read);
-
-    if (fill <= 0)
-        statUnderruns++;
-
-    if (fill > AUDIO_FILL_MAX) {
-        /* The writer is about to run into samples the service has not
-         * played yet. Frames are dropped rather than allowed to overwrite
-         * them: the alternative is to play the wrong audio. The frames
-         * that are dropped are the newest ones, so the sound falls behind
-         * the picture rather than jumping ahead of it. */
-        u64 excess = (u64)(fill - AUDIO_FILL_MAX);
-        if (excess > frames)
-            excess = frames;
-        statDrops += excess;
-        frames -= (unsigned)excess;
-    }
-    else if (fill < AUDIO_FILL_MIN) {
-        /* The writer has fallen behind the service, which is about to play
-         * samples that have not been written. The last sample is repeated
-         * so that the two keep the same distance apart. One sample of
-         * difference is 30 millionths of a second. */
-        u64 extra = (u64)(AUDIO_FILL_MIN - fill);
-        if (extra > AUDIO_RING_FRAMES)
-            extra = AUDIO_RING_FRAMES;
-
-        for (u64 i = 0; i < extra; i++) {
-            u64 index = bufferIndex(written);
-            ring[0][index] = lastLeft;
-            ring[1][index] = lastRight;
-            written++;
-        }
-
-        /* The repeated samples are read over the bus like any others. */
-        for (int ear = 0; ear < AUDIO_EARS; ear++)
-            CSND_FlushDataCache(ring[ear] + bufferIndex(written - extra),
-                                extra * sizeof(s16));
-
-        statCorrections += extra;
-    }
-
-    if (!frames)
-        return;
-
-    /* Write the samples into the ring. The ring wraps, so this is at most
-     * two runs. */
-    u64 index = written % AUDIO_RING_FRAMES;
-    unsigned first = (unsigned)(AUDIO_RING_FRAMES - index);
-    if (first > frames)
-        first = frames;
-
-    if (tone) {
-        /* The tone is made in the left ear's ring and copied to the right
-         * one: both ears get the same signal and the channels are panned
-         * to the sides. */
-        s16* dst = ring[0] + AUDIO_LOOP_OFFSET_FRAMES + index;
-
-        for (unsigned i = 0; i < first; i++)
-            dst[i] = toneSample();
-        if (first < frames) {
-            s16* wrap = ring[0] + AUDIO_LOOP_OFFSET_FRAMES;
-            for (unsigned i = 0; i < frames - first; i++)
-                wrap[i] = toneSample();
-        }
-
-        memcpy(ring[1] + AUDIO_LOOP_OFFSET_FRAMES + index, dst,
-               first * sizeof(s16));
-        if (first < frames)
-            memcpy(ring[1] + AUDIO_LOOP_OFFSET_FRAMES,
-                   ring[0] + AUDIO_LOOP_OFFSET_FRAMES,
-                   (frames - first) * sizeof(s16));
-    }
-    else {
-        for (int ear = 0; ear < AUDIO_EARS; ear++) {
-            const s16* src = ear ? right : left;
-            s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
-
-            memcpy(dst, src, first * sizeof(s16));
-            if (first < frames)
-                memcpy(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES, src + first,
-                       (frames - first) * sizeof(s16));
-        }
-    }
-
-    /* The loudest sample in the block, so that a report of "there is no
-     * sound" can say whether the APU made one. */
-    int peak = 0;
     int peakLeft = 0;
     int peakRight = 0;
     u64 sumSquares = 0;
+    bool send = false;
 
-    if (tone) {
-        /* The tone is at full scale, so there is nothing to measure. */
-        peak = 30000;
-        peakLeft = 30000;
-        peakRight = 30000;
-        /* A sine at full scale is at about minus three decibels, so its
-         * level is about two thirds of full scale. */
-        lastLevel = 65;
-    }
-    else {
-        for (unsigned i = 0; i < frames; i++) {
-            int l = left[i];
-            int r = right[i];
-            if (l < 0) l = -l;
-            if (r < 0) r = -r;
-            if (l > peakLeft) peakLeft = l;
-            if (r > peakRight) peakRight = r;
-            sumSquares += (u64)left[i] * (u64)left[i] +
-                          (u64)right[i] * (u64)right[i];
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        const int16_t* src;
+        unsigned done = 0;
+
+        if (channel[ear] < 0) {
+            /* One channel only: the two ears are mixed into it. */
+            if (ear != 0)
+                continue;
+            src = NULL;
+        }
+        else {
+            src = ear ? right : left;
         }
 
-        peak = peakLeft > peakRight ? peakLeft : peakRight;
+        while (done < frames) {
+            unsigned space = AUDIO_BLOCK_SAMPLES - fillPos[ear];
+            unsigned chunk = (frames - done < space) ? frames - done : space;
+            s16* dst = block[ear] + fillPos[ear];
+            int peak = 0;
 
-        /* How loud the block was, as a percentage of full scale. The root
-         * is worked out without the maths library: the mean square of the
-         * two ears is the square of the level, so the level is its root.
-         */
-        if (frames) {
-            u64 mean = sumSquares / (frames * 2);
-            u32 rms = integerRoot(mean);
-            lastLevel = (int)((u64)rms * 100 / 32767);
+            if (testToneHz > 0) {
+                /* The tone is already at full scale, so it is not made
+                 * louder. */
+                for (unsigned i = 0; i < chunk; i++)
+                    dst[i] = toneSample();
+            }
+            else if (src) {
+                for (unsigned i = 0; i < chunk; i++) {
+                    int sample = (int)src[done + i] * AUDIO_GAIN;
+
+                    /* The gain can take a sample past the end of the
+                     * scale, and a sample that is past the end is a
+                     * click. */
+                    if (sample > 32767)
+                        sample = 32767;
+                    else if (sample < -32768)
+                        sample = -32768;
+
+                    dst[i] = (s16)sample;
+                }
+            }
+            else {
+                /* Mono: the two ears mixed together. */
+                for (unsigned i = 0; i < chunk; i++) {
+                    int sample = ((int)left[done + i] + (int)right[done + i]) / 2 * AUDIO_GAIN;
+
+                    if (sample > 32767)
+                        sample = 32767;
+                    else if (sample < -32768)
+                        sample = -32768;
+
+                    dst[i] = (s16)sample;
+                }
+            }
+
+            /* What is going to the speaker, measured on the way out. */
+            for (unsigned i = 0; i < chunk; i++) {
+                int value = dst[i];
+
+                if (value < 0)
+                    value = -value;
+                if (value > peak)
+                    peak = value;
+
+                sumSquares += (u64)(unsigned)value * (u64)(unsigned)value;
+            }
+
+            if (ear == 0) {
+                if (peak > peakLeft)
+                    peakLeft = peak;
+            }
+            else {
+                if (peak > peakRight)
+                    peakRight = peak;
+            }
+
+            fillPos[ear] += chunk;
+            done += chunk;
+
+            if (fillPos[ear] >= AUDIO_BLOCK_SAMPLES) {
+                fillPos[ear] = 0;
+
+                /* The block is full: the service is told to play it, and
+                 * the samples are on the card's way to the hardware. */
+                playBlock(ear);
+                CSND_FlushDataCache(block[ear],
+                                    AUDIO_BLOCK_SAMPLES * sizeof(s16));
+                if (ear == 0)
+                    statBlocks++;
+                send = true;
+            }
         }
     }
 
-    lastPeak = peak;
+    /* The commands are sent once, for both ears, and the service is not
+     * waited for: it has a whole block's worth of time before the next
+     * one is due. */
+    if (send)
+        csndExecCmds(false);
+
+    /* How loud the block was, as a percentage of full scale. The root is
+     * worked out without the maths library: the mean square of the
+     * samples is the square of the level, so the level is its root. */
+    if (frames) {
+        u64 count = (u64)frames * (channel[1] >= 0 ? 2 : 1);
+        u32 rms = integerRoot(count ? sumSquares / count : 0);
+        lastLevel = (int)((u64)rms * 100 / 32767);
+    }
+
     lastPeakLeft = peakLeft;
     lastPeakRight = peakRight;
+    lastPeak = peakLeft > peakRight ? peakLeft : peakRight;
 
-    lastLeft = left[frames - 1];
-    lastRight = right[frames - 1];
-
-    written += frames;
     statFrames += frames;
+}
 
-    /* The service reads the samples over the bus, so the cache has to be
-     * told about them. Only the part that was written is flushed. */
-    for (int ear = 0; ear < AUDIO_EARS; ear++) {
-        s16* dst = ring[ear] + AUDIO_LOOP_OFFSET_FRAMES + index;
-        CSND_FlushDataCache(dst, first * sizeof(s16));
-        if (first < frames)
-            CSND_FlushDataCache(ring[ear] + AUDIO_LOOP_OFFSET_FRAMES,
-                                (frames - first) * sizeof(s16));
-    }
+/*
+ * The emulator's samples, handed to the transport.
+ *
+ * This is the way the game gets its sound out, and it is also how the
+ * transport knows that the emulator is producing something: the test tone
+ * is only pumped when it is not.
+ */
+void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
+{
+    submitted = true;
+    transportWrite(left, right, frames);
 }
 
 void audio_get_stats(audio_stats* out)
@@ -588,9 +568,7 @@ void audio_get_stats(audio_stats* out)
 
     out->running = running;
     out->frames = statFrames;
-    out->underruns = statUnderruns;
-    out->drops = statDrops;
-    out->corrections = statCorrections;
+    out->blocks = statBlocks;
     out->peak = lastPeak;
     out->peakLeft = lastPeakLeft;
     out->peakRight = lastPeakRight;
@@ -599,18 +577,12 @@ void audio_get_stats(audio_stats* out)
     out->channelLeft = channel[0];
     out->channelRight = channel[1];
     out->testToneHz = testToneHz;
+    out->gain = AUDIO_GAIN;
 
-    if (running) {
-        s64 fill = (s64)(written - readPosition());
-        if (fill < 0)
-            fill = 0;
-        out->fillFrames = (int)fill;
-        out->latencyMs = (int)((fill * 1000) / AUDIO_RATE);
-    }
-    else {
-        out->fillFrames = 0;
-        out->latencyMs = 0;
-    }
+    /* The size of a block is how far the sound is behind the picture:
+     * the emulator fills a block and the service plays it afterwards. */
+    out->blockFrames = AUDIO_BLOCK_SAMPLES;
+    out->latencyMs = (int)((u64)AUDIO_BLOCK_SAMPLES * 1000 / AUDIO_RATE);
 }
 
 /*
@@ -654,8 +626,8 @@ void audio_read_hardware(audio_hardware* out)
  * The test tone.
  *
  * Turning it on stops the game's own sound from being played: the tone is
- * the only signal in the ring. That is deliberate - the point of the tone
- * is to show what the transport and the service do on their own, and
+ * the only signal in the transport. That is deliberate - the point of the
+ * tone is to show what the transport and the service do on their own, and
  * mixing the game's sound into it would hide the answer.
  */
 void audio_set_test_tone(int hz)
@@ -680,38 +652,33 @@ int audio_test_tone_hz(void)
     return testToneHz;
 }
 
-
 /*
- * Hand a block of stereo samples to the transport.
- *
- * When the test tone is on it is what is played, and what the APU made is
- * not: there is one signal in the ring at a time.
- */
-void audio_submit(const int16_t* left, const int16_t* right, unsigned frames)
-{
-    transportWrite(left, right, frames, testToneHz > 0);
-    submitCount++;
-}
-
-/*
- * Keep the test tone going when there is nothing else to play it.
+ * Keep the test tone going.
  *
  * The tone is written with the samples the emulator hands over, so with no
- * game running - or with the game paused - there would be nothing to write
- * it with and the tone would stop after the ring had been played out. The
- * port calls this every frame so that the tone is there to be heard even
- * with nothing else going on.
+ * game running, or with the game paused, there would be nothing to write
+ * it with. The port calls this every frame so that the tone is there to
+ * be heard on its own.
+ *
+ * When the emulator is handing samples over the tone is being written
+ * already, and this does nothing: writing it twice would play it at twice
+ * the speed.
  */
 void audio_pump_test_tone(void)
 {
+    static s16 silence[AUDIO_FRAMES_PER_GB_FRAME];
+
     if (!running || testToneHz <= 0)
         return;
 
-    /* If the emulator has already handed over its samples this frame, the
-     * tone went into the ring with them. */
-    if (submitCount != pumpedCount)
+    if (submitted) {
+        /* The emulator handed samples over this frame, so the tone was
+         * written along with them. */
+        submitted = false;
         return;
+    }
 
-    pumpedCount = submitCount;
-    transportWrite(NULL, NULL, AUDIO_FRAMES_PER_GB_FRAME, true);
+    /* The tone is written by the transport itself, so the samples the
+     * emulator hands over are not used: the tone is the only signal. */
+    transportWrite(silence, silence, AUDIO_FRAMES_PER_GB_FRAME);
 }

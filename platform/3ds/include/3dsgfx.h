@@ -90,6 +90,17 @@ extern u8 gameFrame[GB_WIDTH * GB_HEIGHT];
 /* Put the finished picture on the screen and show it. */
 void gfxPresentGameFrame(void);
 
+/*
+ * Whether the picture is scaled up to fill the screen or drawn at its own
+ * size in the middle of it.
+ *
+ * The original port drew it at its own size, and that is the default here.
+ * The scaled picture is for the screens where a hundred and sixty pixels
+ * across is too small to be worth looking at.
+ */
+void gfxSetPictureScaled(bool scaled);
+bool gfxPictureScaled(void);
+
 /* Start the frame clock. */
 void gfxInitFrameClock(void);
 

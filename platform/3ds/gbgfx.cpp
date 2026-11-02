@@ -171,11 +171,9 @@ static void printAudioStats(void)
     snprintf(line1, sizeof line1, "sound: %llu frames, %d ms",
              (unsigned long long)stats.frames,
              stats.latencyMs);
-    snprintf(line2, sizeof line2, "peak %d", stats.peak);
-    snprintf(line3, sizeof line3, "under %llu, drop %llu, corr %llu",
-             (unsigned long long)stats.underruns,
-             (unsigned long long)stats.drops,
-             (unsigned long long)stats.corrections);
+    snprintf(line2, sizeof line2, "peak %d, gain %d", stats.peak, stats.gain);
+    snprintf(line3, sizeof line3, "blocks %llu",
+             (unsigned long long)stats.blocks);
 
     uiDrawStats(line1, line2, line3);
 }
