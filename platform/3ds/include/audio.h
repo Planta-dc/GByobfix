@@ -17,30 +17,36 @@
  *
  * The design
  * ----------
- * The sound service plays one sample at a time on a channel, and a channel
- * is mono: the two ears of the Game Boy's stereo output have to go to two
- * channels. Each channel is given a ring of samples and asked to loop over
- * it, so the service never runs dry and never has to be restarted.
+ * This is the original port's design, which is simpler than the ring that
+ * was here before it and does not depend on the clock:
  *
- * The service has no way of saying where it is in the buffer, so the
- * position is worked out from the clock: the service is playing at a known
- * rate, and the clock says how long it has been playing. The emulator
- * writes ahead of that position, which is what gives the sound its
- * latency, and the ring is big enough that the write never catches up with
- * the read.
+ *   - the sound is handed over in blocks, one block for each ear;
+ *   - when a block is full it is given to the service to play, and the
+ *     service is told to play it once;
+ *   - the next block is filled while that one is playing, and is given
+ *     to the service when it is full.
  *
- * Two things can go wrong, and both are counted rather than hidden:
+ * The blocks follow one another without a gap: the sample after the last
+ * one of a block is the first one of the next, because the emulator
+ * produced them in that order. So the sound the service plays is the
+ * sound the emulator made, in one piece.
  *
- *   - the emulator falls behind and the service reaches samples that have
- *     not been written yet (an underrun), and
- *   - the emulator runs ahead and would overwrite samples the service has
- *     not played yet (a drop).
+ * The ring that was here before worked out where the service was in its
+ * buffer from the console's clock, which is an assumption about the
+ * service's rate. If the assumption is wrong the writer and the service
+ * drift apart, and the sound goes to pieces in a way that is very hard
+ * to see. Nothing here is timed from the clock, so there is nothing to
+ * drift.
  *
- * Neither is fixed by guessing: the transport corrects the difference by
- * dropping or repeating a single sample, which is a discontinuity of 30
- * millionths of a second. If the console's clock and the sound service's
- * clock disagree about the rate, that is what happens, and the counters
- * say how often.
+ * Two things the original did that are not done here, because they are
+ * why the original made no sound at all:
+ *
+ *   - it never told the service that the console was making a sound.
+ *     The command was written out and never called it. The service will
+ *     sit on a channel that is set up perfectly and say nothing;
+ *   - it played its samples on channels eight and nine, which are the
+ *     tone and noise channels. The samples go on the channels below
+ *     eight, which are the ones that play recorded sound.
  */
 #pragma once
 
@@ -58,8 +64,8 @@ extern "C" {
  *
  * GameYob's APU is sampled every 84 Game Boy cycles, which is 49932.57 Hz.
  * The sound service takes an integer rate, and 49932 is the closest one to
- * it. The difference is 11 parts per million, which the sample correction
- * below takes care of.
+ * it. The difference is 11 parts per million, which is under half a
+ * sample over a block.
  */
 #define AUDIO_RATE 49932u
 
@@ -68,21 +74,20 @@ extern "C" {
 
 typedef struct {
     bool running;          /* the sound service was started                */
-    unsigned long long frames;      /* stereo frames handed over          */
-    unsigned long long underruns;   /* times the emulator fell behind      */
-    unsigned long long drops;       /* samples thrown away                 */
-    unsigned long long corrections; /* single samples dropped or repeated  */
-    int latencyMs;        /* how far ahead of the speaker the emulator is */
-    int fillFrames;       /* the same, in frames                          */
-    int peak;             /* the loudest sample of the last block         */
-    int peakLeft;         /* the loudest sample of each ear               */
+    unsigned long long frames;  /* stereo frames handed over                */
+    unsigned long long blocks;  /* blocks given to the service              */
+    int latencyMs;         /* how far behind the speaker the sound is     */
+    int blockFrames;       /* the size of a block, in frames              */
+    int peak;              /* the loudest sample of the last block         */
+    int peakLeft;          /* the loudest sample of each ear               */
     int peakRight;
-    int level;            /* how loud the last block was, as a percentage */
+    int level;             /* how loud the last block was, as a percentage */
     unsigned int channelMask; /* the channels the service handed out      */
-    int channelLeft;      /* the channel each ear is played on            */
+    int channelLeft;       /* the channel each ear is played on            */
     int channelRight;
-    int testToneHz;       /* the test tone's frequency, 0 when there is
-                             none                                       */
+    int testToneHz;        /* the test tone's frequency, 0 when there is
+                              none                                       */
+    int gain;              /* the gain the transport applies               */
 } audio_stats;
 
 /*
@@ -130,8 +135,8 @@ void audio_read_hardware(audio_hardware* out);
  * The tone goes through the same transport as the game's sound and is
  * played at full scale, which is exactly what the APU does not do. When
  * it is on, the samples the APU makes are not played: there is one signal
- * in the ring at a time, and mixing the two would change the timing that
- * the transport exists to keep.
+ * in the transport at a time, and mixing the two would change the timing
+ * that the transport exists to keep.
  *
  * A frequency of zero turns it off.
  */
@@ -143,8 +148,9 @@ int audio_test_tone_hz(void);
  *
  * The tone is written with the samples the emulator hands over, so with no
  * game running, or with the game paused, there would be nothing to write
- * it with. The port calls this every frame so that the tone is there to be
- * heard on its own.
+ * it with. The port calls this every frame so that the tone is there to
+ * be heard on its own. It does nothing when the emulator is handing
+ * samples over, because then the tone is being written already.
  */
 void audio_pump_test_tone(void);
 

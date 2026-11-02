@@ -97,7 +97,7 @@ What the tests are for:
 | `check_render`  | The new renderer draws the same picture as the old one, pixel for pixel, over randomised Game Boy states. |
 | `check_blit`    | The picture lands in the right place at every scale, and nothing is painted outside it. |
 | `check_timing`  | The frame clock keeps its time, and a late sleep is not added up over thousands of frames. |
-| `check_audio`   | The sound transport keeps its distance from the sound service, and says so when it cannot. |
+| `check_audio`   | The sound transport tells the service that the console is making a sound, hands it the emulator's samples in order, and turns them down again when it is muted. |
 
 The renderer test runs the old renderer and the new one over the same
 randomised states and compares every pixel. The old renderer is upstream

@@ -112,6 +112,7 @@ typedef enum {
 #define SOUND_ONE_SHOT      (2u << 10)
 #define SOUND_FORMAT_16BIT  (1u << 12)
 #define SOUND_ENABLE        (1u << 14)
+#define SOUND_CHANNEL(n)    ((u32)(n) & 0x1F)
 
 Result csndInit(void);
 Result csndPlaySound(int chn, u32 flags, u32 sampleRate, float vol, float pan,
@@ -119,7 +120,17 @@ Result csndPlaySound(int chn, u32 flags, u32 sampleRate, float vol, float pan,
 void CSND_SetVol(u32 channel, u32 chnVolumes, u32 capVolumes);
 void CSND_SetPlayState(u32 channel, u32 value);
 void CSND_SetPlayStateR(u32 channel, u32 value);
+void CSND_SetChnRegs(u32 flags, u32 physaddr0, u32 physaddr1, u32 totalbytesize,
+                     u32 chnVolumes, u32 capVolumes);
 Result CSND_FlushDataCache(const void* adr, u32 size);
+
+/* The address of a piece of memory, as the service wants it.
+ *
+ * The real SDK turns a pointer into a physical address. A pointer on a
+ * development machine does not fit in the thirty two bits the service
+ * wants, so this hands out a number from a table of the pointers it has
+ * been given, and the shim looks the pointer up again. */
+u32 osConvertVirtToPhys(void* ptr);
 
 /* What the service says about a channel. The real one is a union of the
  * channel's own registers; this is only the part the transport reads. */
