@@ -246,10 +246,10 @@ int scr_browser_hit(int y, int top, int n)
 #define ROW_PITCH 20
 #define ROW_H   18
 
-/* Only this many tabs / rows fit on the screen; a larger count would walk off
+/* Only this many tabs fit on the screen; a larger count would walk off
  * the caller's array and draw over the footer. */
 #define UI_MAX_TABS 4
-#define UI_MAX_ROWS 7
+
 
 static int clamp(int v, int hi)
 {
@@ -393,11 +393,14 @@ void scr_menu(const ui_menu *m)
 		ui_text(&ui_font_small, MARGIN, note_y, m->note, C_DIM,
 			CONTENT_W);
 
-	const char *hints[] = {
+	const char *const usual_hints[] = {
 		"D-Pad move   Left/Right change   A select",
 		"B resume   L/R changes page",
 	};
-	draw_footer(hints, 2);
+	const char *const *hints = m->hints != NULL ? m->hints : usual_hints;
+	int n_hints = m->hints != NULL ? m->n_hints : 2;
+
+	draw_footer(hints, n_hints);
 }
 
 
@@ -427,6 +430,38 @@ void scr_message(const char *title, const char *l1, const char *l2,
 
 	if (hint != NULL)
 		ui_text_center(&ui_font_small, UI_W / 2, 210, hint, C_DIM);
+}
+
+/* ------------------------------------------------------------------------- */
+/* The sound's numbers                                                        */
+/* ------------------------------------------------------------------------- */
+
+/*
+ * A small panel with the sound's numbers.
+ *
+ * The numbers are the transport's: how many frames it has played, how far
+ * behind it is, how loud the loudest sample was, and how often it had to
+ * catch up. They are in a panel rather than in the text console, so that
+ * the screen does not have a page of text on it.
+ */
+void scr_stats(const char *l1, const char *l2, const char *l3)
+{
+	ui_clear(C_BG);
+
+	const int w = 190;
+	const int h = 56;
+	const int x = MARGIN;
+	const int y = UI_H - h - MARGIN;
+
+	ui_rrect(x, y, w, h, 8, C_PANEL);
+	ui_rrect(x, y + 4, 3, h - 8, 1, C_ACCENT);
+
+	int ly = y + 7;
+	ui_text(&ui_font_small, x + 12, ly, or_empty(l1), C_TEXT, w - 24);
+	ly += 15;
+	ui_text(&ui_font_small, x + 12, ly, or_empty(l2), C_DIM, w - 24);
+	ly += 15;
+	ui_text(&ui_font_small, x + 12, ly, or_empty(l3), C_DIM, w - 24);
 }
 
 void scr_blank(void)

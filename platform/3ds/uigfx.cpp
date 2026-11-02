@@ -421,6 +421,12 @@ void ui_present(void)
 
 	const int off = ((int)fh - UI_W) / 2;
 
+	/* The canvas is 320 wide and the top screen is 400, so the interface
+	 * does not cover the whole of it there. The screen is cleared first,
+	 * or the text console's last words would stay on the screen beside
+	 * the panels. */
+	memset(fb, 0, (size_t)fw * fh * sizeof(u16));
+
 	for (int x = 0; x < UI_W; x++)
 	{
 		u16 *dst = &fb[(x + off) * fw + (fw - 1)];
@@ -431,5 +437,5 @@ void ui_present(void)
 
 	/* The copy went through the CPU's cache, and the GPU does not look in
 	 * there. */
-	GSPGPU_FlushDataCache(&fb[off * fw], (size_t)UI_W * fw * sizeof(u16));
+	GSPGPU_FlushDataCache(fb, (size_t)fw * fh * sizeof(u16));
 }

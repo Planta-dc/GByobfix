@@ -260,7 +260,7 @@ void printerSaveFile() {
     // Find the first available "print number".
     char filename[300];
     while (true) {
-        printf(filename, "%s-%d.bmp", gameboy->getRomFile()->getBasename(), numPrinted);
+        sprintf(filename, "%s-%d.bmp", gameboy->getRomFile()->getBasename(), numPrinted);
         if (appending ||                        // If appending, the last file written to is already selected.
                 access(filename, R_OK) != 0) {  // Else, if the file doesn't exist, we're done searching.
 

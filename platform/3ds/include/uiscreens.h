@@ -16,6 +16,9 @@
 
 #define UI_HEADER_H 30
 
+/* How many rows of a list fit on the screen. */
+#define UI_MAX_ROWS 7
+
 /* ---- file browser ------------------------------------------------------- */
 
 #define UI_LIST_Y     60
@@ -66,6 +69,10 @@ typedef struct
 	int sel;    /* the selected row, counted from the first row */
 	bool title_active; /* the page name is what is selected */
 	const char *note; /* grey line under the rows, may be NULL */
+	/* The key hints in the footer. The usual ones are used when this is
+	 * NULL. */
+	const char *const *hints;
+	int n_hints;
 } ui_menu;
 
 void scr_menu(const ui_menu *m);
@@ -79,6 +86,9 @@ int scr_menu_hit_row(int y, int n_rows);
 
 void scr_message(const char *title, const char *l1, const char *l2,
 		 const char *hint);
+
+/* A small panel with the sound's numbers, in the corner of the screen. */
+void scr_stats(const char *l1, const char *l2, const char *l3);
 
 /* Flat background only. */
 void scr_blank(void);

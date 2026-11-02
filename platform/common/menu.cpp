@@ -314,10 +314,29 @@ void soundEnableFunc(int value) {
 #endif
 }
 void romInfoFunc(int value) {
+#ifdef _3DS
+    /* The 3DS shows the information as a panel, not as a page of text. */
+    char title[64];
+    char detail[128];
+
+    gameboy->getRomInfo(title, sizeof title, detail, sizeof detail);
+    displayGraphicalSubMenu(subMenuGenericUpdateFunc);
+    uiDrawMessage("ROM", title, detail, "A or B to go back");
+    return;
+#endif
+
     displaySubMenu(subMenuGenericUpdateFunc);
     gameboy->printRomInfo();
 }
 void versionInfoFunc(int value) {
+#ifdef _3DS
+    displayGraphicalSubMenu(subMenuGenericUpdateFunc);
+    uiDrawMessage("Version", "GameYob " VERSION_STRING,
+                  "Game Boy and Game Boy Color emulator",
+                  "A or B to go back");
+    return;
+#endif
+
     displaySubMenu(subMenuGenericUpdateFunc);
     printVersionInfo();
 }
@@ -823,6 +842,14 @@ void displaySubMenu(void (*updateFunc)()) {
      * behind the text. */
     consoleSetSuspended(false);
     clearConsole();
+#endif
+}
+void displayGraphicalSubMenu(void (*updateFunc)()) {
+    subMenuUpdateFunc = updateFunc;
+#ifdef _3DS
+    /* The submenu is drawn as panels, which cover the screen, so the
+     * console stays out of the way. */
+    consoleSetSuspended(true);
 #endif
 }
 void closeSubMenu() {

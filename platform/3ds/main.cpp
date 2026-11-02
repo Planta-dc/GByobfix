@@ -53,8 +53,8 @@ int main(int argc, char* argv[])
     setMenuDefaults();
     readConfigFile();
 
-    printf("GameYob 3DS\n\n");
-
+    /* The interface says the name of the program in the header of the
+     * file browser, so there is nothing to print here. */
     mgr_selectRom();
 
     /* The renderer and the frame clock. The clock starts here, so that the
