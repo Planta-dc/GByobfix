@@ -63,7 +63,7 @@ checked=0
 for source in "$PLATFORM"/*.cpp "$COMMON"/*.cpp; do
     name="${source#"$ROOT"/}"
     checked=$((checked + 1))
-    if ! output=$(g++ "${FLAGS[@]}" "$source" 2>&1 | grep -E "error"); then
+    if ! output=$(g++ "${FLAGS[@]}" "$source" 2>&1 | grep -E "error:"); then
         :
     else
         if [ -n "$output" ]; then
@@ -79,7 +79,7 @@ name="platform/3ds/audio.c"
 checked=$((checked + 1))
 if ! output=$(gcc -fsyntax-only -std=gnu99 \
         -I"$SHIM" -I"$INCLUDE_DIR" -I"$PLATFORM/include" -I"$COMMON/include" \
-        -D__3DS__ -DARM11 -D_3DS "$PLATFORM/audio.c" 2>&1 | grep -E "error"); then
+        -D__3DS__ -DARM11 -D_3DS "$PLATFORM/audio.c" 2>&1 | grep -E "error:"); then
     :
 else
     if [ -n "$output" ]; then
