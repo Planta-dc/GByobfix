@@ -231,6 +231,11 @@ static unsigned long long statFrames;
 /* The buffers that have been given to the service. */
 static unsigned long long statBlocks;
 
+/* The times the service refused the commands. A refusal means the sound
+ * is not going to happen, and it is the only way to tell that apart from
+ * the service taking the commands and staying quiet. */
+static unsigned long long statRefused;
+
 /*
  * The flags for a channel: sixteen bit samples, played once, on this
  * channel, at the sample rate.
@@ -401,6 +406,7 @@ bool audio_init(void)
 
     statFrames = 0;
     statBlocks = 0;
+    statRefused = 0;
     submitted = false;
 
     running = true;
@@ -615,8 +621,10 @@ static void transportWrite(const int16_t* left, const int16_t* right, unsigned f
     /* The commands are sent once, for both ears, and the service is not
      * waited for: it has a whole buffer's worth of time before the next
      * one is due. */
-    if (send)
-        csndExecCmds(false);
+    if (send) {
+        if (R_FAILED(csndExecCmds(false)))
+            statRefused++;
+    }
 
     /* How loud the block was, as a percentage of full scale. The root is
      * worked out without the maths library: the mean square of the
@@ -655,6 +663,7 @@ void audio_get_stats(audio_stats* out)
     out->running = running;
     out->frames = statFrames;
     out->blocks = statBlocks;
+    out->refused = statRefused;
     out->peak = lastPeak;
     out->peakLeft = lastPeakLeft;
     out->peakRight = lastPeakRight;

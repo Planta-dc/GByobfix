@@ -408,6 +408,12 @@ void diagDump(void)
            (unsigned long long)stats.frames,
            (unsigned long long)stats.blocks, stats.gain);
 
+    /* The service refusing the commands is the difference between "there
+     * is no sound because the game is not making any" and "there is no
+     * sound because the service would not play it". */
+    APPEND("the service refused %llu of the commands\n",
+           (unsigned long long)stats.refused);
+
     if (fresh.readable) {
         for (int ear = 0; ear < 2; ear++) {
             for (int buf = 0; buf < 2; buf++) {
@@ -488,8 +494,11 @@ const char *const *diagLines(int *count)
              stats.level, stats.peak);
     n++;
 
-    snprintf(lineText[n], sizeof lineText[n], "blocks   %llu  gain %d",
-             (unsigned long long)stats.blocks, stats.gain);
+    /* The blocks, the gain, and how many times the service would not take
+     * the commands. */
+    snprintf(lineText[n], sizeof lineText[n], "blocks   %llu  gain %d  refused %llu",
+             (unsigned long long)stats.blocks, stats.gain,
+             (unsigned long long)stats.refused);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "frames   %llu",
