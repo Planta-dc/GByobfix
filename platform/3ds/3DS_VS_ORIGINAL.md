@@ -43,8 +43,45 @@ picture is *put on the screen*, and the way the *sound is played*.
 | `platform/3ds/3dio.cpp` | the current libctru file system | **Equivalent.** The original was written against libctru v0.6 (`FS_makePath`, `PATH_CHAR`, `FS_archive`); the current library has `fsMakePath`, `FS_Path` and a `u64` archive handle. The interface is the same. |
 | `platform/3ds/nifi.cpp` | the same empty stubs, but they return `false` instead of nothing | **Equivalent.** The original's stubs returned an undefined value; these return `false`. |
 | `platform/3ds/3dtimer.cpp` | identical | **Identical.** |
-| `platform/common/menu.cpp` | 47 items against the original's 43 | **Nothing lost.** Every one of the original's 43 is here. Four were added: Status Strip, Picture Size, Diagnostics, Sound Test. |
+| `platform/common/menu.cpp` | 47 items against the original's 43 | **Nothing lost.** The original's 43 are here, in the same order, with the same choices. Four were added: Status Strip, Picture Size, Diagnostics, Sound Test. |
 | `platform/common/cheats.cpp`, `config.cpp`, `error.cpp`, `filechooser.cpp`, `gameboy.cpp`, `gbmanager.cpp` | the graphical interface instead of the text console | **Nothing lost, different screens.** The cheats, key mapping, ROM information, error and statistics screens are drawn instead of printed. |
+
+## The audit
+
+Two checks were run over the two ports, so that "nothing was lost" is a
+measurement rather than a reading.
+
+**The menu.** Every item was extracted from both `platform/common/menu.cpp`
+files, in order, with the choices each one offers. The original has 43
+items and this port has 47. The sequence is the original's, unchanged,
+with four items put into it:
+
+    Exit, Reset, State Slot, Save State, Load State, Delete State,
+    Quit to Launcher, Exit without saving, Suspend, Button Mapping,
+    Manage Cheats, Rumble Pak, GB Camera, Console Output, GB Printer,
+    Autosaving, Save Settings, Game Screen, Single Screen, Scaling,
+    Scale Filter, SGB Borders, Custom Border, Select Border,
+    **Status Strip**, **Picture Size**, GBC Bios, Detect GBA, GBC Mode,
+    SGB Mode, Wait for Vblank, Hblank, Window, Sound, Sound Timing Fix,
+    ROM Info, Version Info, **Diagnostics**, **Sound Test**, Channel 1,
+    Channel 2, Channel 3, Channel 4, Link to DS, Stub, Local Link,
+    Swap Focus
+
+Nothing was removed, and no item offers different choices than it did.
+("Scaling" and "Scale Filter" are the DS's own items and did nothing on
+the 3DS in the original either; "Picture Size" is the 3DS's version of
+them.)
+
+**The functions.** Every function in the original's `platform/3ds` and
+`platform/common` was extracted and looked for here. Nine are not here:
+
+| Original's | Why |
+|---|---|
+| `getPixel`, `gfxGetActiveFramebuffer`, `gfxGetInactiveFramebuffer`, `gfxMySwapBuffers` | the original's own framebuffer handling; libctru's framebuffer and swap are used instead |
+| `csnd_init`, `initSampler`, `addSample`, `swapBuffers` | the original's sound service handling; `platform/3ds/audio.c` does it instead, and `swapBuffers` is the two-buffer scheme that was put back |
+| `CSND_setchannel_enabled` | the original's hand-written service command; the library's own is used |
+
+Nothing that the user could reach is among them.
 
 ## What was put back, and why
 
