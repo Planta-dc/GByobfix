@@ -16,6 +16,27 @@
 
 #define UI_HEADER_H 30
 
+/*
+ * The interface's colours.
+ *
+ * They are here rather than in the drawing file because the status strip
+ * on the game picture uses the same ones: the strip is drawn over the
+ * picture with the same palette the panels are drawn with, so that the
+ * two look like one program.
+ */
+#define C_BG      UI_RGB(14, 17, 23)
+#define C_HEADER  UI_RGB(23, 28, 39)
+#define C_PANEL   UI_RGB(24, 30, 41)
+#define C_PANEL2  UI_RGB(31, 38, 52)
+#define C_LINE    UI_RGB(44, 53, 70)
+#define C_TEXT    UI_RGB(236, 239, 244)
+#define C_DIM     UI_RGB(139, 149, 167)
+#define C_ACCENT  UI_RGB(78, 141, 255)
+#define C_ACCENT2 UI_RGB(143, 107, 255)
+#define C_SEL     UI_RGB(30, 45, 74) /* accent over panel, flattened */
+#define C_GOOD    UI_RGB(94, 200, 140)
+#define C_BAD     UI_RGB(235, 110, 110)
+
 /* How many rows of a list fit on the screen. */
 #define UI_MAX_ROWS 7
 

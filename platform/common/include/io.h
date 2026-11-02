@@ -26,6 +26,23 @@ FileHandle* file_open(const char*, const char*);    // Returns NULL if error occ
 void        file_close(FileHandle*);
 void        file_read(void*, int, int, FileHandle*);
 void        file_write(const void*, int, int, FileHandle*);
+
+/*
+ * A write that does not flush, and a flush of its own.
+ *
+ * file_write() asks the card to put the bytes on the card, and on a slow
+ * card that costs tens of milliseconds - longer than a frame. A file that
+ * is written in small pieces, a log of a running program for instance,
+ * should not pay that on every piece: it can write what it has and flush
+ * when it wants the bytes to be there.
+ *
+ * The file system still holds the bytes until the flush, so a file closed
+ * without one is not lost - the card only gets them when the file is
+ * closed. A program that is killed does lose them.
+ */
+void        file_write_buffered(const void*, int, int, FileHandle*);
+void        file_flush(FileHandle*);
+
 void        file_gets(char*, int, FileHandle*);
 void        file_putc(char, FileHandle*);
 

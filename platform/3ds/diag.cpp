@@ -1,11 +1,13 @@
 /*
- * The diagnostics: the port's own numbers, on the screen and in a file.
+ * The diagnostics: the port's own numbers, on the screen, on the game
+ * picture and in a file.
  *
  * See diag.h for what this is for.
  */
 #include "diag.h"
 
 #include <3ds.h>
+#include <3ds/os.h>
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -22,17 +24,37 @@
  * The log.
  *
  * It is a file on the card, in the root of it, so that it can be found
- * without knowing where the games are. It is written only while the log is
- * on, and it is written a line at a time: the card is slow, and a flush
- * per line would be felt in the frame time.
+ * without knowing where the games are.
+ *
+ * The lines are buffered in memory and written to the card in pieces.
+ * That is not an optimisation, it is the whole point: a write of a
+ * kilobyte or two to a slow card has been measured at tens of
+ * milliseconds - GBabe's port measured 44 ms for 1.5 KiB on one - and
+ * that is longer than a frame, so writing every line as it happens
+ * would cost a dropped frame and a hitch in the sound every time.
+ *
+ * So the buffer is 8 KiB, which is about twelve seconds of lines, and it
+ * is written when it is three quarters full or when five seconds have
+ * passed. The things that are worth having even if the program falls
+ * over - the start, a setting being changed, an error - are written at
+ * once instead.
+ *
+ * The file stops growing at 384 KiB and says so in its last line: an
+ * unbounded log on a card is a card filling up silently, and the first
+ * minutes are the interesting ones.
  */
+#define LOG_BUF 8192
+#define LOG_MAX_BYTES (384 * 1024)
+#define LOG_FLUSH_TICKS (SYSCLOCK_ARM11 * 5)
+
 static FileHandle *logFile;
 static bool logging;
-
-/* The panel's lines. The panel is redrawn every frame, so they are made
- * fresh every time and the array belongs to this module. */
-static char lineText[DIAG_MAX_LINES][64];
-static const char *linePointers[DIAG_MAX_LINES];
+static char logBuffer[LOG_BUF];
+static size_t logUsed;
+static size_t logWritten;
+static u64 logStartTick;
+static u64 logLastWrite;
+static bool logTruncated;
 
 /*
  * The frame time.
@@ -47,11 +69,17 @@ static u64 lastTick;
 static u64 frameCount;
 static u32 lastPeriodUs;
 static u32 avgPeriodUs;
-static u32 maxPeriodUs;
+static u32 worstPeriodUs;
 static u32 lateFrames;
+static u32 lateTotal;
 
 /* Whether the diagnostics panel is on the screen. */
 static bool panelOpen;
+
+/* The panel's lines. The panel is redrawn every frame, so they are made
+ * fresh every time and the array belongs to this module. */
+static char lineText[DIAG_MAX_LINES][64];
+static const char *linePointers[DIAG_MAX_LINES];
 
 /*
  * What the sound service says about the channels.
@@ -73,12 +101,17 @@ void diagInit(void)
 {
     logging = false;
     logFile = NULL;
+    logUsed = 0;
+    logWritten = 0;
+    logTruncated = false;
+
     lastTick = 0;
     frameCount = 0;
     lastPeriodUs = 0;
     avgPeriodUs = 0;
-    maxPeriodUs = 0;
+    worstPeriodUs = 0;
     lateFrames = 0;
+    lateTotal = 0;
     panelOpen = false;
     hardwareAge = 0;
 }
@@ -98,11 +131,32 @@ const char *diagLogPath(void)
     return DIAG_LOG_PATH;
 }
 
+/* Seconds since the log started. */
+static double secondsSinceStart(void)
+{
+    return (double)(svcGetSystemTick() - logStartTick) / SYSCLOCK_ARM11;
+}
+
+/* Put what is in the buffer on the card. */
+static void writeOut(void)
+{
+    if (!logFile || logUsed == 0)
+        return;
+
+    file_write_buffered(logBuffer, 1, logUsed, logFile);
+    file_flush(logFile);
+
+    logWritten += logUsed;
+    logUsed = 0;
+    logLastWrite = svcGetSystemTick();
+}
+
 /*
  * Open or close the log.
  *
  * The file is started again from the beginning every time the log is
- * turned on, so that the numbers in it are all from one run.
+ * turned on, so that the numbers in it are all from one run. If it
+ * cannot be opened the log is simply off: there is nowhere to put it.
  */
 void diagSetLogging(bool on)
 {
@@ -121,35 +175,126 @@ void diagSetLogging(bool on)
         if (!logFile)
             return;
 
+        logUsed = 0;
+        logWritten = 0;
+        logTruncated = false;
+        logStartTick = svcGetSystemTick();
+        logLastWrite = logStartTick;
         logging = true;
 
-        diagLog("GameYob 3DS diagnostics\n");
-        diagLog("log started\n");
+        /* A log has to say which program wrote it: one version number
+         * covers a lot of builds. */
+        diagLogUrgent("# GameYob 3DS %s debug log\n", VERSION_STRING);
+        diagLogUrgent("# console time %llu\n", (unsigned long long)osGetTime());
     }
     else {
         logging = false;
 
         if (logFile) {
+            writeOut();
+            file_flush(logFile);
             file_close(logFile);
             logFile = NULL;
         }
     }
 }
 
-/* A line in the log. */
-void diagLog(const char *fmt, ...)
+/*
+ * Add a line to the buffer.
+ *
+ * One whole line at a time, so that a timestamp always starts a line.
+ */
+static void appendLine(const char *text, bool urgent)
 {
-    char buffer[512];
-    va_list args;
+    char entry[320];
+    int n;
 
-    if (!logging || !logFile)
+    if (!logFile || !logging || logTruncated)
         return;
 
+    n = snprintf(entry, sizeof entry, "[%9.3f] %s\n", secondsSinceStart(),
+                 text);
+    if (n < 0)
+        return;
+    if ((size_t)n >= sizeof entry)
+        n = (int)sizeof entry - 1;
+
+    if (logUsed + (size_t)n > sizeof logBuffer) {
+        writeOut();
+        if (logTruncated)
+            return;
+    }
+
+    memcpy(logBuffer + logUsed, entry, (size_t)n);
+    logUsed += (size_t)n;
+
+    if (logWritten + logUsed > LOG_MAX_BYTES) {
+        /* Say why the file stops here, rather than just ending. */
+        writeOut();
+        logTruncated = true;
+
+        file_printf(logFile, "[%9.3f] stopped: %u KiB limit reached\n",
+                    secondsSinceStart(),
+                    (unsigned)(LOG_MAX_BYTES / 1024));
+        file_flush(logFile);
+        return;
+    }
+
+    if (urgent)
+        writeOut();
+}
+
+void diagLog(const char *fmt, ...)
+{
+    char text[256];
+    va_list args;
+
     va_start(args, fmt);
-    vsnprintf(buffer, sizeof buffer, fmt, args);
+    vsnprintf(text, sizeof text, fmt, args);
     va_end(args);
 
-    file_printf(logFile, "%s", buffer);
+    appendLine(text, false);
+}
+
+void diagLogUrgent(const char *fmt, ...)
+{
+    char text[256];
+    va_list args;
+
+    va_start(args, fmt);
+    vsnprintf(text, sizeof text, fmt, args);
+    va_end(args);
+
+    appendLine(text, true);
+}
+
+/*
+ * Write the buffer out, but only when it is worth a card write.
+ *
+ * The buffer is 8 KiB and a second of lines is about half a kilobyte, so
+ * waiting until it is three quarters full means twelve seconds of lines
+ * and one write, instead of a write a second and twelve times as many
+ * hitches. Five seconds is the other end of it: if there is only a little
+ * in the buffer, it goes out every five seconds anyway rather than
+ * waiting for a crash to take it.
+ */
+void diagFlushSoft(void)
+{
+    u64 now = svcGetSystemTick();
+
+    if (!logFile || logUsed == 0)
+        return;
+
+    if (logUsed * 4 < sizeof logBuffer * 3 &&
+        now - logLastWrite < LOG_FLUSH_TICKS)
+        return;
+
+    writeOut();
+}
+
+void diagFlush(void)
+{
+    writeOut();
 }
 
 /*
@@ -176,15 +321,25 @@ void diagTick(void)
         else
             avgPeriodUs += (microseconds - avgPeriodUs) / 16;
 
-        if (microseconds > maxPeriodUs)
-            maxPeriodUs = microseconds;
+        if (microseconds > worstPeriodUs)
+            worstPeriodUs = microseconds;
 
-        if (microseconds > LATE_US)
+        if (microseconds > LATE_US) {
             lateFrames++;
+            lateTotal++;
+        }
     }
 
     lastTick = now;
     frameCount++;
+
+    /* The window closes every second. The worst frame and the late frames
+     * are counted over it, so that a fault an hour ago does not sit in
+     * the numbers for ever. */
+    if ((frameCount % 60) == 0) {
+        worstPeriodUs = 0;
+        lateFrames = 0;
+    }
 
     /* The heartbeat: once a second, which is once every sixty frames. */
     if (logging && logFile && (frameCount % 60) == 0) {
@@ -199,6 +354,20 @@ void diagTick(void)
                 stats.peak, stats.level, (unsigned long long)stats.underruns,
                 (unsigned long long)stats.drops);
     }
+}
+
+void diagGetFrameStats(diag_frame_stats *out)
+{
+    if (!out)
+        return;
+
+    out->frames = frameCount;
+    out->avgUs = avgPeriodUs;
+    out->lastUs = lastPeriodUs;
+    out->worstUs = worstPeriodUs;
+    out->lateFrames = lateFrames;
+    out->lateTotal = lateTotal;
+    out->fps = avgPeriodUs ? (1000000.0f / (float)avgPeriodUs) : 0.0f;
 }
 
 /* Everything there is to say, written out in full. */
@@ -248,11 +417,12 @@ void diagDump(void)
         APPEND("the service would not say anything about the channels\n");
     }
 
-    APPEND("frame period %u us  last %u us  max %u us  late %u\n", avgPeriodUs,
-           lastPeriodUs, maxPeriodUs, lateFrames);
+    APPEND("frame period %u us  last %u us  max %u us  late %u of %u\n",
+           avgPeriodUs, lastPeriodUs, worstPeriodUs, lateFrames, lateTotal);
     APPEND("paused %s\n", mgr_isPaused() ? "yes" : "no");
 
     file_printf(logFile, "%s", block);
+    file_flush(logFile);
 
 #undef APPEND
 }
@@ -322,11 +492,11 @@ const char *const *diagLines(int *count)
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "frame    %u us  max %u us",
-             avgPeriodUs, maxPeriodUs);
+             avgPeriodUs, worstPeriodUs);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "late     %u of %llu", lateFrames,
-             (unsigned long long)frameCount);
+             (unsigned long long)lateTotal);
     n++;
 
     snprintf(lineText[n], sizeof lineText[n], "rom      %s", romName);
