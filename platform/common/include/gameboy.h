@@ -144,6 +144,10 @@ class Gameboy {
         void setRomFile(RomFile* r);
         void unloadRom();
         void printRomInfo();
+        /* The same information as printRomInfo, but as two lines of text
+         * for the graphical interface to draw. */
+        void getRomInfo(char* title, int titleSize, char* detail,
+                        int detailSize);
         bool isRomLoaded();
 
         int loadSave(int saveId);

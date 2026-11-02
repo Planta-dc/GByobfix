@@ -14,6 +14,11 @@
 #include "cheats.h"
 #include "romfile.h"
 
+#ifdef _3DS
+#include <stdint.h>
+#include "ui3ds.h"
+#endif
+
 #ifdef SDL
 #define INI_PATH "gameyobds.ini"
 #else
@@ -258,6 +263,41 @@ void redrawKeyConfigChooser() {
     int& option = keyConfigChooser_option;
     KeyConfig* config = &keyConfigs[selectedKeyConfig];
 
+#ifdef _3DS
+    /* The 3DS draws the table as panels: the configuration at the top and
+     * the buttons under it, with what each of them does beside it. */
+    std::vector<const char*> buttons;
+    std::vector<const char*> functions;
+    std::vector<int> buttonIndex;
+
+    for (int i = 0; i < NUM_BINDABLE_BUTTONS; i++) {
+        /* These button bits aren't assigned to anything, so no strings
+         * for them. */
+        if ((i > 15 && i < 24) || i == 12 || i == 13)
+            continue;
+
+        buttons.push_back(dsKeyNames[i]);
+        functions.push_back(gbKeyNames[config->funcKeys[i]]);
+        buttonIndex.push_back(i);
+    }
+
+    /* The row that is selected: the configuration, or one of the
+     * buttons. */
+    int sel = 0;
+
+    for (size_t i = 0; i < buttonIndex.size(); i++) {
+        if (buttonIndex[i] == option) {
+            sel = (int)i + 1;
+            break;
+        }
+    }
+
+    uiDrawKeyConfig(config->name,
+                    buttons.empty() ? NULL : &buttons[0],
+                    functions.empty() ? NULL : &functions[0],
+                    (int)buttons.size(), sel, NULL);
+#else
+
     clearConsole();
 
     iprintf("Config: ");
@@ -289,6 +329,7 @@ void redrawKeyConfigChooser() {
     if (selectedKeyConfig != 0) /* can't erase the default */ {
         iprintf("\n\nPress Y to delete this config.");
     }
+#endif
 }
 
 void updateKeyConfigChooser() {

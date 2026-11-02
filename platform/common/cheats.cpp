@@ -12,6 +12,12 @@
 #include "romfile.h"
 #include "io.h"
 
+#ifdef _3DS
+#include <stdint.h>
+#include <vector>
+#include "ui3ds.h"
+#endif
+
 #define TO_INT(a) ( (a) >= 'a' ? (a) - 'a' + 10 : (a) >= 'A' ? (a) - 'A' + 10 : (a) - '0')
 
 CheatEngine::CheatEngine(Gameboy* g) {
@@ -228,6 +234,27 @@ bool cheatMenu_gameboyWasPaused;
 CheatEngine* ch; // cheat engine to display the menu for
 
 void redrawCheatMenu() {
+#ifdef _3DS
+    /* The 3DS draws the list as panels, with a switch for each cheat
+     * beside its name. */
+    int numCheats = ch->getNumCheats();
+
+    std::vector<const char*> names;
+    std::vector<uint8_t> enabled;
+
+    names.reserve(numCheats);
+    enabled.reserve(numCheats);
+
+    for (int i = 0; i < numCheats; i++) {
+        names.push_back(ch->cheats[i].name);
+        enabled.push_back(ch->isCheatEnabled(i) ? 1 : 0);
+    }
+
+    uiDrawCheats(names.empty() ? NULL : &names[0],
+                 enabled.empty() ? NULL : &enabled[0],
+                 numCheats, cheatMenuSelection);
+#else
+
     int numCheats = ch->getNumCheats();
 
     int numPages = (numCheats-1)/cheatsPerPage+1;
@@ -262,12 +289,21 @@ void redrawCheatMenu() {
                 iprintfColored(CONSOLE_COLOR_WHITE, "  Off  ");
         }
     }
+#endif
 
 }
 
 void updateCheatMenu() {
     bool redraw=false;
     int numCheats = ch->getNumCheats();
+
+#ifdef _3DS
+    /* The graphical list shows this many rows at a time, so the page
+     * buttons jump that far. */
+    const int pageSize = UI_MAX_ROWS;
+#else
+    const int pageSize = cheatsPerPage;
+#endif
 
     if (cheatMenuSelection >= numCheats) {
         cheatMenuSelection = 0;
@@ -291,13 +327,13 @@ void updateCheatMenu() {
         redraw = true;
     }
     else if (keyJustPressed(mapMenuKey(MENU_KEY_R))) {
-        cheatMenuSelection += cheatsPerPage;
+        cheatMenuSelection += pageSize;
         if (cheatMenuSelection >= numCheats)
             cheatMenuSelection = 0;
         redraw = true;
     }
     else if (keyJustPressed(mapMenuKey(MENU_KEY_L))) {
-        cheatMenuSelection -= cheatsPerPage;
+        cheatMenuSelection -= pageSize;
         if (cheatMenuSelection < 0)
             cheatMenuSelection = numCheats-1;
         redraw = true;

@@ -699,6 +699,21 @@ void Gameboy::printRomInfo() {
     printf("RAM Size: %.2x (%d banks)\n", romFile->getRamSize(), getNumSramBanks());
 }
 
+/*
+ * The same information as printRomInfo, as two lines.
+ *
+ * The graphical interface draws lines of text, not a page of them, so the
+ * information is put into two lines: the name of the cartridge and what
+ * is inside it.
+ */
+void Gameboy::getRomInfo(char* title, int titleSize, char* detail,
+                         int detailSize) {
+    snprintf(title, titleSize, "%s", romFile->getRomTitle());
+    snprintf(detail, detailSize, "%.2x %s  %d ROM banks  %d SRAM banks",
+             romFile->getMapper(), mbcNames[romFile->getMBC()],
+             romFile->getNumRomBanks(), getNumSramBanks());
+}
+
 bool Gameboy::isRomLoaded() {
     return romFile != NULL;
 }

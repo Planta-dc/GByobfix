@@ -57,6 +57,7 @@
 #include "inputhelper.h"
 #include "frameclock.h"
 #include "audio.h"
+#include "ui3ds.h"
 
 /* public variables */
 
@@ -146,33 +147,36 @@ static int statsCounter;
 /*
  * The sound's numbers.
  *
- * The point of printing them is that a dropout should not be invisible.
+ * The point of showing them is that a dropout should not be invisible.
  * The transport counts how often the emulator fell behind the sound
- * service, how often it had to throw samples away, and how often it had
- * to correct the difference between the console's clock and the sound
- * service's clock. A count that climbs is a warning that something is
- * wrong; a count that stays at zero is the promise that nothing is.
+ * service, how often it had to throw samples away, and how often it
+ * had to correct the difference between the console's clock and the
+ * sound service's clock. A count that climbs is a warning that something
+ * is wrong; a count that stays at zero is the promise that nothing is.
  *
- * Once a second, on the console, which is on the screen the game is not
- * on.
+ * Every few seconds, in a panel on the screen the game is not on. They
+ * used to be printed on the text console, which left a page of text on
+ * the screen; the panel holds the same numbers in the same place.
  */
 static void printAudioStats(void)
 {
     audio_stats stats;
+    char line1[64];
+    char line2[64];
+    char line3[64];
+
     audio_get_stats(&stats);
 
-    /* The console is thirty columns wide, so the numbers are put on
-     * lines that fit. A line that does not fit is wrapped by the
-     * console, and a wrapped line every second fills the screen up with
-     * half sentences. */
-    printf("sound: %llu frames, %d ms\n",
-           (unsigned long long)stats.frames,
-           stats.latencyMs);
-    printf("peak %d\n", stats.peak);
-    printf("under %llu, drop %llu, corr %llu\n",
-           (unsigned long long)stats.underruns,
-           (unsigned long long)stats.drops,
-           (unsigned long long)stats.corrections);
+    snprintf(line1, sizeof line1, "sound: %llu frames, %d ms",
+             (unsigned long long)stats.frames,
+             stats.latencyMs);
+    snprintf(line2, sizeof line2, "peak %d", stats.peak);
+    snprintf(line3, sizeof line3, "under %llu, drop %llu, corr %llu",
+             (unsigned long long)stats.underruns,
+             (unsigned long long)stats.drops,
+             (unsigned long long)stats.corrections);
+
+    uiDrawStats(line1, line2, line3);
 }
 
 

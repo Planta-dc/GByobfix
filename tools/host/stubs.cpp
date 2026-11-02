@@ -17,6 +17,15 @@ bool fastForwardMode = false;
 bool fastForwardKey = false;
 bool soundDisabled = false;
 
+/* The sound's numbers, which the renderer puts in a panel on the screen.
+ * There is no screen here, so they go nowhere. */
+void uiDrawStats(const char* line1, const char* line2, const char* line3)
+{
+    (void)line1;
+    (void)line2;
+    (void)line3;
+}
+
 /* The APU's console output. It is noise for a test, so it goes nowhere
  * except a counter that says it happened. */
 int printLogCount = 0;

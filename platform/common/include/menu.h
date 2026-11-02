@@ -81,6 +81,9 @@ void updateMenu();
 void printMenuMessage(const char* s);
 
 void displaySubMenu(void (*updateFunc)());
+/* A submenu that the platform draws itself, as panels rather than as
+ * text: the text console stays out of the way. */
+void displayGraphicalSubMenu(void (*updateFunc)());
 void closeSubMenu();
 
 int getMenuOption(const char* name);
