@@ -23,6 +23,7 @@
 #include "ui3ds.h"
 #include "audio.h"
 #include "diag.h"
+#include "hud.h"
 #endif
 
 const int MENU_DS   = 1;
@@ -279,8 +280,22 @@ void setScaleModeFunc(int value) {
         disableMenuOption("Console Output");
     }
 }
-void setScaleFilterFunc(int value) {
-    scaleFilter = value;
+void setScaleFilterFunc(int value) {    scaleFilter = value;
+}
+
+/*
+ * The status strip on the game picture.
+ *
+ * The change is written to the log at once: a setting that was changed is
+ * one of the things worth having even if the program falls over.
+ */
+void hudEnableFunc(int value) {
+#ifdef _3DS
+    hudSetEnabled(value != 0);
+    diagLogUrgent("status strip %s\n", value ? "on" : "off");
+    return;
+#endif
+    (void)value;
 }
 
 void customBorderEnableFunc(int value) {
@@ -370,8 +385,18 @@ static void diagnosticsUpdateFunc() {
 
     if (keyJustPressed(mapMenuKey(MENU_KEY_X))) {
         forceReleaseKey(mapMenuKey(MENU_KEY_X));
-        diagSetLogging(!diagLogging());
-        diagLog("log %s\n", diagLogging() ? "on" : "off");
+
+        if (diagLogging()) {
+            /* The line goes in before the file is closed, so that the log
+             * says when it stopped. */
+            diagLogUrgent("log off\n");
+            diagSetLogging(false);
+        }
+        else {
+            diagSetLogging(true);
+            diagLogUrgent("log on\n");
+        }
+
         return;
     }
 
@@ -411,7 +436,7 @@ void soundTestFunc(int value) {
         hz = 1000;
 
     audio_set_test_tone(hz);
-    diagLog("test tone %d Hz\n", hz);
+    diagLogUrgent("test tone %d Hz\n", hz);
     return;
 #endif
     (void)value;
@@ -511,7 +536,7 @@ SubMenu menuList[] = {
     },
     {
         "Display",
-        7,
+        8,
         {
             {"Game Screen", setScreenFunc, 2, {"Top","Bottom"}, 0, MENU_ALL},
             {"Single Screen", setSingleScreenFunc, 2, {"Off","On"}, 0, MENU_ALL},
@@ -520,6 +545,7 @@ SubMenu menuList[] = {
             {"SGB Borders", sgbBorderEnableFunc, 2, {"Off","On"}, 1, MENU_ALL},
             {"Custom Border", customBorderEnableFunc, 2, {"Off","On"}, 1, MENU_ALL},
             {"Select Border", (void (*)(int))selectBorder, 0, {}, 0, MENU_ALL},
+            {"Status Strip", hudEnableFunc, 2, {"Off","On"}, 1, MENU_3DS}
         }
     },
     {

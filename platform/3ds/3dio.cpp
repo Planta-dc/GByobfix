@@ -139,6 +139,19 @@ void file_write(const void* src, int bs, int size, FileHandle* fileHandle) {
     fileHandle->head += bytesWritten;
 }
 
+/* A write that leaves the bytes in the file system for now. See io.h for
+ * why a program that writes often wants this one. */
+void file_write_buffered(const void* src, int bs, int size, FileHandle* fileHandle) {
+    u32 bytesWritten;
+    FSFILE_Write(fileHandle->handle, &bytesWritten, fileHandle->head, src, bs*size, 0);
+    fileHandle->head += bytesWritten;
+}
+
+/* Put what has been written on the card. */
+void file_flush(FileHandle* fileHandle) {
+    FSFILE_Flush(fileHandle->handle);
+}
+
 void file_gets(char* buffer, int bufferSize, FileHandle* fileHandle) {
     u32 bytesRead;
     char* ptr = buffer;

@@ -14,19 +14,6 @@
 #include <stdio.h>
 #include <string.h>
 
-#define C_BG      UI_RGB(14, 17, 23)
-#define C_HEADER  UI_RGB(23, 28, 39)
-#define C_PANEL   UI_RGB(24, 30, 41)
-#define C_PANEL2  UI_RGB(31, 38, 52)
-#define C_LINE    UI_RGB(44, 53, 70)
-#define C_TEXT    UI_RGB(236, 239, 244)
-#define C_DIM     UI_RGB(139, 149, 167)
-#define C_ACCENT  UI_RGB(78, 141, 255)
-#define C_ACCENT2 UI_RGB(143, 107, 255)
-#define C_SEL     UI_RGB(30, 45, 74) /* accent over panel, flattened */
-#define C_GOOD    UI_RGB(94, 200, 140)
-#define C_BAD     UI_RGB(235, 110, 110)
-
 #define MARGIN   10
 #define CONTENT_W (UI_W - 2 * MARGIN)
 

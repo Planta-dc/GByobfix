@@ -50,6 +50,10 @@ extern const ui_font ui_font_small, ui_font_body, ui_font_bold, ui_font_title,
 
 extern uint16_t ui_canvas[UI_W * UI_H];
 
+/* Blend a colour into another one, in the interface's 16 bit format. The
+ * alpha is 0 for none of it and 256 for all of it. */
+uint16_t ui_blend(uint16_t dst, uint16_t src, int alpha);
+
 void ui_clear(uint16_t c);
 void ui_fill(int x, int y, int w, int h, uint16_t c);
 void ui_fill_alpha(int x, int y, int w, int h, uint16_t c, int alpha);

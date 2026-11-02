@@ -12,6 +12,7 @@
 #include <string.h>
 #include <3ds/services/gspgpu.h>
 #include "3dsgfx.h"
+#include "hud.h"
 #include "menu.h"
 
 /* The block the blit works in. */
@@ -150,6 +151,13 @@ void gfxPresentGameFrame(void) {
     gfxBlitGameFrame(framebuffer, width, height, gameFrame,
                      (width - scaledWidth) / 2, (height - scaledHeight) / 2,
                      num, den);
+
+    /* The status strip, drawn over the top of the picture. It is drawn
+     * into the framebuffer the picture was just drawn into, so it cannot
+     * fall behind the picture. */
+    hudDraw((u16 *)framebuffer, width, height,
+            (width - scaledWidth) / 2, (height - scaledHeight) / 2,
+            scaledWidth, scaledHeight);
 
     /* The display controller reads the framebuffer over the bus, and the
      * processor's copy of it is in its cache, so what was drawn has to be

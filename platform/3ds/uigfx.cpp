@@ -37,6 +37,11 @@ static inline uint16_t blend(uint16_t dst, uint16_t src, int a)
 	return (uint16_t)((dr << 11) | (dg << 5) | db);
 }
 
+uint16_t ui_blend(uint16_t dst, uint16_t src, int alpha)
+{
+	return blend(dst, src, alpha);
+}
+
 static inline void plot(int x, int y, uint16_t c, int a)
 {
 	if ((unsigned)x >= UI_W || (unsigned)y >= UI_H || a <= 0)

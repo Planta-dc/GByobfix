@@ -14,6 +14,7 @@
 #include "3dsgfx.h"
 #include "audio.h"
 #include "diag.h"
+#include "hud.h"
 
 int main(int argc, char* argv[])
 {
@@ -68,6 +69,10 @@ int main(int argc, char* argv[])
     else if (testTone == 2)
         audio_set_test_tone(1000);
 
+    /* The status strip on the game picture, if the settings say it was
+     * on, for the same reason. */
+    hudSetEnabled(getMenuOption("Status Strip") != 0);
+
     /* The interface says the name of the program in the header of the
      * file browser, so there is nothing to print here. */
     mgr_selectRom();
@@ -87,6 +92,11 @@ int main(int argc, char* argv[])
         /* The frame time, and the line a second in the log. This is here
          * because this is where a frame ends. */
         diagTick();
+
+        /* The log, written out when it is worth a card write. A card
+         * write costs more than a frame, so it is not done every time
+         * there is something to write. */
+        diagFlushSoft();
     }
 
 	return 0;
