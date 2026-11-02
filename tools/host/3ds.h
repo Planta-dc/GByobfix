@@ -121,6 +121,23 @@ void CSND_SetPlayState(u32 channel, u32 value);
 void CSND_SetPlayStateR(u32 channel, u32 value);
 Result CSND_FlushDataCache(const void* adr, u32 size);
 
+/* What the service says about a channel. The real one is a union of the
+ * channel's own registers; this is only the part the transport reads. */
+typedef union {
+    u32 value[3];
+    struct {
+        u8 active;
+        u8 _pad1;
+        u16 _pad2;
+        s16 adpcmSample;
+        u8 adpcmIndex;
+        u8 _pad3;
+        u32 unknownZero;
+    };
+} CSND_ChnInfo;
+
+Result csndGetState(u32 channel, CSND_ChnInfo* out);
+
 /* The channels the service handed out. */
 extern u32 csndChannels;
 

@@ -50,3 +50,6 @@ void uiDrawMessage(const char* title, const char* line1, const char* line2,
 
 /* The sound's numbers, in a panel in the corner of the screen. */
 void uiDrawStats(const char* line1, const char* line2, const char* line3);
+
+/* The diagnostics: the port's own numbers, in a panel of lines. */
+void uiDrawDiagnostics(const char *const *lines, int n);

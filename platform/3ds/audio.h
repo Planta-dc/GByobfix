@@ -75,7 +75,30 @@ typedef struct {
     int latencyMs;        /* how far ahead of the speaker the emulator is */
     int fillFrames;       /* the same, in frames                          */
     int peak;             /* the loudest sample of the last block         */
+    int peakLeft;         /* the loudest sample of each ear               */
+    int peakRight;
+    int level;            /* how loud the last block was, as a percentage */
+    unsigned int channelMask; /* the channels the service handed out      */
+    int channelLeft;      /* the channel each ear is played on            */
+    int channelRight;
+    int testToneHz;       /* the test tone's frequency, 0 when there is
+                             none                                       */
 } audio_stats;
+
+/*
+ * What the sound service itself says about the channels.
+ *
+ * The transport knows what it asked for; this is what the service says it
+ * got. The two are not the same thing: a channel can be set up perfectly
+ * and still be sitting there doing nothing, and the only way to tell the
+ * difference is to ask the service.
+ */
+typedef struct {
+    bool readable;            /* the service could be asked at all        */
+    int active[2];            /* whether each channel is playing          */
+    unsigned int reg[2][3];   /* the channel's own registers, as the
+                                 service has them                        */
+} audio_hardware;
 
 /* Start the sound service. Returns false if it could not be started, in
  * which case the emulator runs silently. */
@@ -95,6 +118,35 @@ void audio_submit(const int16_t* left, const int16_t* right, unsigned frames);
 
 /* What the transport has been doing. */
 void audio_get_stats(audio_stats* out);
+
+/* What the sound service says about the two channels the transport uses.
+ * This asks the service, so it is not cheap: it is for the diagnostics
+ * panel and the log, not for the frame loop. */
+void audio_read_hardware(audio_hardware* out);
+
+/*
+ * A test tone, so that the service can be told apart from the APU.
+ *
+ * The tone goes through the same transport as the game's sound and is
+ * played at full scale, which is exactly what the APU does not do. When
+ * it is on, the samples the APU makes are not played: there is one signal
+ * in the ring at a time, and mixing the two would change the timing that
+ * the transport exists to keep.
+ *
+ * A frequency of zero turns it off.
+ */
+void audio_set_test_tone(int hz);
+int audio_test_tone_hz(void);
+
+/*
+ * Keep the test tone going.
+ *
+ * The tone is written with the samples the emulator hands over, so with no
+ * game running, or with the game paused, there would be nothing to write
+ * it with. The port calls this every frame so that the tone is there to be
+ * heard on its own.
+ */
+void audio_pump_test_tone(void);
 
 #ifdef __cplusplus
 }

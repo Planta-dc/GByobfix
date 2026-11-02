@@ -58,6 +58,7 @@
 #include "frameclock.h"
 #include "audio.h"
 #include "ui3ds.h"
+#include "diag.h"
 
 /* public variables */
 
@@ -581,10 +582,12 @@ void drawScreen()
 
     /* The sound's numbers, every few seconds. The console is narrow, and
      * three lines every second scroll the numbers off the screen before
-     * they can be read. */
+     * they can be read. The diagnostics panel has the same numbers and
+     * more of them, so it does not fight with the panel for the screen. */
     if (++statsCounter >= 300) {
         statsCounter = 0;
-        printAudioStats();
+        if (!diagPanelOpen())
+            printAudioStats();
     }
 
     /* Fast forward runs as fast as the console can, so the next frame is

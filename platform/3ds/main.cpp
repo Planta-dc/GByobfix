@@ -13,6 +13,7 @@
 #include "printconsole.h"
 #include "3dsgfx.h"
 #include "audio.h"
+#include "diag.h"
 
 int main(int argc, char* argv[])
 {
@@ -49,9 +50,23 @@ int main(int argc, char* argv[])
     fs_init();
     mgr_init();
 
+    /* The diagnostics. They are prepared here so that the log can be
+     * written from the first frame, and they are not written to until
+     * they are asked for. */
+    diagInit();
+
 	initInput();
     setMenuDefaults();
     readConfigFile();
+
+    /* The test tone, if the settings say it was on. The setting is
+     * remembered, so the tone has to be started again here or the menu
+     * would say one thing and the speaker another. */
+    int testTone = getMenuOption("Sound Test");
+    if (testTone == 1)
+        audio_set_test_tone(440);
+    else if (testTone == 2)
+        audio_set_test_tone(1000);
 
     /* The interface says the name of the program in the header of the
      * file browser, so there is nothing to print here. */
@@ -65,6 +80,13 @@ int main(int argc, char* argv[])
     for (;;) {
         mgr_runFrame();
         mgr_updateVBlank();
+
+        /* The test tone, when there is nothing else to play it with. */
+        audio_pump_test_tone();
+
+        /* The frame time, and the line a second in the log. This is here
+         * because this is where a frame ends. */
+        diagTick();
     }
 
 	return 0;

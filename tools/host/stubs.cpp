@@ -26,6 +26,13 @@ void uiDrawStats(const char* line1, const char* line2, const char* line3)
     (void)line3;
 }
 
+/* Whether the diagnostics panel is on the screen. There is no screen
+ * here, so it never is. */
+bool diagPanelOpen(void)
+{
+    return false;
+}
+
 /* The APU's console output. It is noise for a test, so it goes nowhere
  * except a counter that says it happened. */
 int printLogCount = 0;
