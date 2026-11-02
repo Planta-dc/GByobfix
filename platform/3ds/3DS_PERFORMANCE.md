@@ -128,13 +128,27 @@ which is 49932.57 Hz, and it produces 836 stereo frames a Game Boy frame.
 
 The sound service plays one sample at a time on a channel, and a channel
 is mono, so the two ears of the Game Boy's stereo output go to two
-channels. Each channel is given a block of two frames of samples, and
-when the block is full the service is told to play it once. The next
-block is filled while that one is playing, and is handed over when it is
-full.
+channels.
 
-The blocks follow one another without a gap: the sample after the last
-one of a block is the first one of the next, because the emulator
+Each ear has two buffers of two frames of samples. The service plays one
+of them while the other is filled; when the one being filled is full it is
+handed over to be played, and the one that was being played is filled
+instead. The buffer the service is reading is therefore never the buffer
+being written to.
+
+This is the original port's design, and it is the reason the sound is
+right. A transport with one buffer per ear cannot do it: it would be
+writing over the samples the service is reading, and what came out would
+be a mixture of two frames of sound.
+
+Each buffer has a channel of its own, so the address the service is given
+for a buffer never changes, and the channel that is handed a buffer is the
+one that played it a block ago and has been idle since. The channels are
+taken from the mask the service hands out rather than assumed, so the
+transport works on whatever the service gives it.
+
+The buffers follow one another without a gap: the sample after the last
+one of a buffer is the first one of the next, because the emulator
 produced them in that order. So the service plays the emulator's samples
 in one piece, and there is no position anywhere that has to be worked out
 from a clock. The earlier transport did exactly that: it kept a ring of
