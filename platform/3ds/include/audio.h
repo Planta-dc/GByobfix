@@ -75,6 +75,7 @@ typedef struct {
     bool running;          /* the sound service was started                */
     unsigned long long frames;  /* stereo frames handed over                */
     unsigned long long blocks;  /* blocks given to the service              */
+    unsigned long long refused; /* the times the service refused them      */
     int latencyMs;         /* how far behind the speaker the sound is     */
     int blockFrames;       /* the size of a block, in frames              */
     int peak;              /* the loudest sample of the last block         */
