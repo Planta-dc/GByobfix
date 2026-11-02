@@ -359,26 +359,33 @@ void audio_exit(void)
 {
     bool started = false;
 
+    /* The channels are told to stop first.
+     *
+     * Command one: this stops the channel playing. It is not the same as
+     * the switch above, which stops everything and throws the channel's
+     * registers away. */
+    for (int ear = 0; ear < AUDIO_EARS; ear++) {
+        if (block[ear] && channel[ear] >= 0) {
+            CSND_SetPlayState(channel[ear], 0);
+            started = true;
+        }
+    }
+
+    /* The commands above are only written into the service's queue. They
+     * are not sent until the queue is executed, and until then the
+     * service is still playing the block that is about to be given back.
+     * So the queue is executed and waited for before the memory goes
+     * away. */
+    if (started)
+        csndExecCmds(true);
+
     for (int ear = 0; ear < AUDIO_EARS; ear++) {
         if (block[ear]) {
-            if (channel[ear] >= 0) {
-                /* Command one: this stops the channel playing. It is not
-                 * the same as the switch above, which stops everything
-                 * and throws the channel's registers away. */
-                CSND_SetPlayState(channel[ear], 0);
-                started = true;
-            }
             linearFree(block[ear]);
             block[ear] = NULL;
         }
         channel[ear] = -1;
     }
-
-    /* The commands above are only written into the service's queue.
-     * They are not sent until the queue is executed, and without this
-     * the service keeps playing the block that has just been freed. */
-    if (started)
-        csndExecCmds(true);
 
     running = false;
 }

@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "audio.h"
+#include "3dsgfx.h"
 #include "frameclock.h"
 #include "gbmanager.h"
 #include "gameboy.h"
@@ -496,6 +497,17 @@ const char *const *diagLines(int *count)
 
     snprintf(lineText[n], sizeof lineText[n], "rom      %s", romName);
     n++;
+
+    /* Where the picture is on the screen. A picture in the wrong place
+     * is easy to see and hard to describe, and this says exactly where
+     * it went. */
+    {
+        int px, py, pw, ph;
+        gfxPictureRect(&px, &py, &pw, &ph);
+        snprintf(lineText[n], sizeof lineText[n], "picture  %dx%d at %d,%d",
+                 pw, ph, px, py);
+        n++;
+    }
 
     snprintf(lineText[n], sizeof lineText[n], "log      %s  %s",
              DIAG_LOG_PATH, logging ? "on" : "off");

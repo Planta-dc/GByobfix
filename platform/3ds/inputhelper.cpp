@@ -10,6 +10,7 @@
 #include "inputhelper.h"
 #include "gameboy.h"
 #include "audio.h"
+#include "diag.h"
 #include "printconsole.h"
 #include "main.h"
 #include "console.h"
@@ -146,8 +147,22 @@ void system_cleanup() {
     mgr_save();
     mgr_exit();
 
-    csndExit();
+    /* The transport first, then the service.
+     *
+     * The transport stops the channels and gives the blocks of samples
+     * back, and it does that by writing commands into the service's
+     * shared memory. csndExit() unmaps that memory and sets the pointer
+     * to nothing, so anything the transport says after it is a write to
+     * address zero, and the console takes the application down with it.
+     *
+     * The order was the other way round, and every exit crashed.
+     */
     audio_exit();
+    csndExit();
+
+    /* The log is flushed while the card is still there to be written
+     * to. */
+    diagFlush();
 
     fsExit();
     gfxExit();
